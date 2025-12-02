@@ -15,6 +15,15 @@ DFTB+ can be either used as a standalone program or integrated into other
 software packages as a library.
 
 
+About this fork
+===============
+
+This repository is a fork of DFTB+ modified to extract quantities required for
+**CDFTB-CI (Constrained DFTB Configuration Interaction)**. It includes
+customizations to output Lagrange multipliers needed for
+post-processing in the CI scheme.
+
+
 Installation
 ============
 
