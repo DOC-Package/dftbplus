@@ -154,6 +154,15 @@ module dftbp_dftb_elecconstraints
     !> Whether constraints require converged micro-iterations
     procedure :: requiresConvergence => TElecConstraint_requiresConvergence
 
+    !> Returns the constraint potential values (Added by Hideaki Takahashi)
+    procedure :: getVc => TElecConstraint_getVc
+
+    !> Returns the constraint deviation values (Added by Hideaki Takahashi)
+    procedure :: getDeviation => TElecConstraint_getDeviation
+
+    !> Returns the number of constraints (Added by Hideaki Takahashi)
+    procedure :: getNConstr => TElecConstraint_getNConstr
+
   end type TElecConstraint
 
 contains
@@ -661,5 +670,51 @@ contains
     end do
 
   end subroutine addConstraintsShiftQ_
+  
+
+  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  !                     Modification by Hideaki Takahashi                     !
+  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> Returns the constraint potential values.
+  pure function TElecConstraint_getVc(this) result(Vc)
+
+    !> Class instance
+    class(TElecConstraint), intent(in) :: this
+
+    !> Constraint potential values
+    real(dp), allocatable :: Vc(:)
+
+    Vc = this%Vc
+
+  end function TElecConstraint_getVc
+
+
+  !> Returns the constraint deviation (N_calc - N_target).
+  pure function TElecConstraint_getDeviation(this) result(dWdVc)
+
+    !> Class instance
+    class(TElecConstraint), intent(in) :: this
+
+    !> Deviation values
+    real(dp), allocatable :: dWdVc(:)
+
+    dWdVc = this%dWdVc
+
+  end function TElecConstraint_getDeviation
+
+
+  !> Returns the number of constraints.
+  pure function TElecConstraint_getNConstr(this) result(nConstr)
+
+    !> Class instance
+    class(TElecConstraint), intent(in) :: this
+
+    !> Number of constraints
+    integer :: nConstr
+
+    nConstr = this%nConstr
+
+  end function TElecConstraint_getNConstr
 
 end module dftbp_dftb_elecconstraints
