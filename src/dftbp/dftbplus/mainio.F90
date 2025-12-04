@@ -4623,20 +4623,28 @@ contains
   end subroutine printGeoStepInfo
 
 
-  !> Prints the line above the start of the SCC cycle data
-  subroutine printSccHeader()
+  !> Prints the line above the start of the SCC cycle data (Modified by Hideaki Takahashi).
+  subroutine printSccHeader(tElecConstraint)
 
-    write(stdOut, "(A5, A18, A18, A18)") "iSCC", " Total electronic ", "  Diff electronic ",&
-        & "     SCC error    "
+    !> Is there electronic constraint
+    logical, intent(in), optional :: tElecConstraint
+
+    if (present(tElecConstraint) .and. tElecConstraint) then
+      write(stdOut, "(A5, A18, A18, A18, A20)") "iSCC", " Total electronic ", &
+          & "  Diff electronic ", "     SCC error    ", "         Vc       "
+    else
+      write(stdOut, "(A5, A18, A18, A18)") "iSCC", " Total electronic ", &
+          & "  Diff electronic ", "     SCC error    "
+    end if
 
   end subroutine printSccHeader
 
 
-  !> Prints the line above the start of the electronic constraints cycle data
+  !> Prints the line above the start of the electronic constraints cycle data (Modified by Hideaki Takahashi).
   subroutine printElecConstrHeader()
 
-    write(stdOut, "(A6,A5,3A18)") repeat(" ", 6), "iConst", "  Total electronic",&
-        & "     max(dW/dVc)  ", "     dW           "
+    write(stdOut, "(A6,A5,4A18)") repeat(" ", 6), "iConst", "  Total electronic",&
+        & "     max(dW/dVc)  ", "     dW           ", "     Vc           "
 
   end subroutine printElecConstrHeader
 
@@ -4663,9 +4671,8 @@ contains
     write(stdOut, *)
   end subroutine printBlankLine
 
-
-  !> Prints info about scc convergence.
-  subroutine printSccInfo(tDftbU, iSccIter, Eelec, diffElec, sccErrorQ)
+  !> Prints info about scc convergence (Modified by Hideaki Takahashi).
+  subroutine printSccInfo(tDftbU, iSccIter, Eelec, diffElec, sccErrorQ, elecConstraint)
 
     !> Are orbital potentials being used
     logical, intent(in) :: tDftbU
@@ -4673,7 +4680,7 @@ contains
     !> Iteration count
     integer, intent(in) :: iSccIter
 
-    !> electronic energy
+    !> Electronic energy
     real(dp), intent(in) :: Eelec
 
     !> Difference in electronic energy between this iteration and the last
@@ -4682,16 +4689,23 @@ contains
     !> Maximum charge difference between input and output
     real(dp), intent(in) :: sccErrorQ
 
-    if (tDFTBU) then
-      write(stdOut, "(I5,E18.8,E18.8,E18.8)") iSCCIter, Eelec, diffElec, sccErrorQ
+    !> Electronic constraint object (optional)
+    type(TElecConstraint), intent(in), optional :: elecConstraint
+
+    real(dp), allocatable :: Vc(:)
+    integer :: nConstr
+
+    if (present(elecConstraint)) then
+      Vc = elecConstraint%getVc()
+      write(stdOut, "(I5,4E18.8)") iSccIter, Eelec, diffElec, sccErrorQ, Vc(1)
     else
-      write(stdOut, "(I5,E18.8,E18.8,E18.8)") iSCCIter, Eelec, diffElec, sccErrorQ
+      write(stdOut, "(I5,3E18.8)") iSccIter, Eelec, diffElec, sccErrorQ
     end if
 
   end subroutine printSccInfo
 
 
-  !> Prints info about electronic constraint convergence.
+  !> Prints info about electronic constraint convergence (Modified by Hideaki Takahashi).
   subroutine printElecConstrInfo(elecConstraint, iConstrIter, Eelec)
 
     !> Represents electronic contraints
@@ -4709,13 +4723,19 @@ contains
     !> Maximum derivative of energy functional with respect to Vc
     real(dp) :: dWdVcMax
 
+    !> Current constraint potentials
+    real(dp), allocatable :: Vc(:)
+
     ! Sum up all free energy contributions
     deltaWTotal = elecConstraint%getFreeEnergy()
 
     ! Get maximum derivative of energy functional with respect to Vc
     dWdVcMax = elecConstraint%getMaxEnergyDerivWrtVc()
 
-    write(stdOut, "(T6,I5,3E18.8)") iConstrIter, Eelec, deltaWTotal, dWdVcMax
+    ! Get current constraint potentials
+    Vc = elecConstraint%getVc()
+
+    write(stdOut, "(T6,I5,4E18.8)") iConstrIter, Eelec, deltaWTotal, dWdVcMax, Vc(1)
 
   end subroutine printElecConstrInfo
 

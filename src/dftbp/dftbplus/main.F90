@@ -1019,7 +1019,7 @@ contains
 
       call getSccInfo(iSccIter, this%dftbEnergy(this%deltaDftb%iDeterminant)%Eelec, Eold,&
           & diffElec)
-      if (this%tNegf) call printSccHeader()
+      if (this%tNegf) call printSccHeader(allocated(this%elecConstraint))
 
       tWriteSccRestart = env%tGlobalLead .and. needsSccRestartWriting(this%restartFreq,&
           & iGeoStep, iSccIter, this%minSccIter, this%maxSccIter, this%tMd,&
@@ -1065,9 +1065,16 @@ contains
     !> Self-consistency error
     real(dp), intent(in) :: sccErrorQ
 
-     if (this%tSccCalc) then
-      call printSccInfo(allocated(this%dftbU), iSccIter,&
-          & this%dftbEnergy(this%deltaDftb%iDeterminant)%Eelec, diffElec, sccErrorQ)
+    ! Write SCC information (Modified by Hideaki Takahashi)
+    if (this%tSccCalc) then
+      if (allocated(this%elecConstraint)) then
+        call printSccInfo(allocated(this%dftbU), iSccIter, &
+            & this%dftbEnergy(this%deltaDftb%iDeterminant)%Eelec, diffElec, sccErrorQ, &
+            & this%elecConstraint)
+      else
+        call printSccInfo(allocated(this%dftbU), iSccIter, &
+            & this%dftbEnergy(this%deltaDftb%iDeterminant)%Eelec, diffElec, sccErrorQ)
+      end if
       if (this%tNegf) then
         call printBlankLine()
       end if
@@ -1306,7 +1313,7 @@ contains
 
     if (.not.this%tRestartNoSC) then
       call initSccLoop(this%tSccCalc, this%xlbomdIntegrator, this%minSccIter, this%maxSccIter,&
-          & this%sccTol, tConverged, this%tNegf, this%reks)
+        & this%sccTol, tConverged, this%tNegf, this%reks, allocated(this%elecConstraint))
     else
       tConverged = .true.
     end if
@@ -2689,9 +2696,9 @@ contains
   end subroutine reallocateSparseArrays
 
 
-  !> Initialise basic variables before the scc loop.
+  !> Initialise basic variables before the scc loop (modified by Hideaki Takahashi).
   subroutine initSccLoop(tSccCalc, xlbomdIntegrator, minSccIter, maxSccIter, sccTol, tConverged,&
-      & tNegf, reks)
+      & tNegf, reks, tElecConstraint)
 
     !> Is this an SCC calculation?
     logical, intent(in) :: tSccCalc
@@ -2717,6 +2724,9 @@ contains
     !> Data type for REKS
     type(TReksCalc), allocatable, intent(inout) :: reks
 
+    !> Is there electronic constraint (optional)
+    logical, intent(in), optional :: tElecConstraint
+
     if (allocated(xlbomdIntegrator)) then
       call xlbomdIntegrator%getSCCParameters(minSccIter, maxSccIter, sccTol)
     end if
@@ -2729,7 +2739,11 @@ contains
       end if
     else
       if (tSccCalc .and. .not. tNegf) then
-        call printSccHeader()
+        if (present(tElecConstraint)) then
+          call printSccHeader(tElecConstraint)
+        else
+          call printSccHeader()
+        end if
       end if
     end if
 
