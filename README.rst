@@ -18,10 +18,31 @@ software packages as a library.
 About this fork
 ===============
 
-This repository is a fork of DFTB+ modified to extract quantities required for
-**CDFTB-CI (Constrained DFTB Configuration Interaction)**. It includes
-customizations to output Lagrange multipliers needed for
-post-processing in the CI scheme.
+This repository is a fork of DFTB+ modified for Constrained DFT (CDFT)
+development and CDFTB-CI calculations. The following modifications have been made:
+
+**Enhanced output for electronic constraints:**
+
+- Added ``Vc`` (constraint potential) output to SCC iteration information
+  (``printSccInfo`` in ``mainio.F90``)
+- Added ``Vc`` output to constraint iteration information
+  (``printElecConstrInfo`` in ``mainio.F90``)
+- Added automatic export of final constraint potential to ``final_Vc.dat`` file
+  after convergence (``writeFinalVc`` in ``main.F90``)
+- Added getter functions (``getVc``, ``getDeviation``, ``getNConstr``) to
+  ``TElecConstraint`` type for accessing constraint data (``elecconstraints.F90``)
+
+These modifications are useful for:
+
+- Monitoring constraint convergence during SCC iterations
+- Extracting final constraint potentials for CDFTB-CI coupling calculations
+- Debugging and analysis of constrained DFT calculations
+
+**Modified files:**
+
+- ``src/dftbp/dftb/elecconstraints.F90``
+- ``src/dftbp/dftbplus/main.F90``
+- ``src/dftbp/dftbplus/mainio.F90``
 
 
 Installation
