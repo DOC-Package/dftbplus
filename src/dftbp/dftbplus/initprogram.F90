@@ -10,7 +10,8 @@
 
 !> Global variables and initialization for the main program.
 module dftbp_dftbplus_initprogram
-  use dftbp_common_accuracy, only : dp, elecTolMax, lc, mc, minTemp, sc, tolEfEquiv, tolSameDist
+  use dftbp_common_accuracy, only : dp, elecTolMax, lc, mc, minTemp, sc, tolEfEquiv, tolSameDist,&
+      & hugeIterations
   use dftbp_common_atomicmass, only : getAtomicMass
   use dftbp_common_coherence, only : checkExactCoherence, checkToleranceCoherence
   use dftbp_common_constants, only : amu__au, au__ps, Bohr__AA, Bohr__nm, Boltzmann, Hartree__eV,&
@@ -98,14 +99,10 @@ module dftbp_dftbplus_initprogram
   use dftbp_math_randomgenpool, only : init, TRandomGenPool
   use dftbp_math_ranlux, only : getRandom, TRanlux
   use dftbp_math_simplealgebra, only : determinant33, diagonal, invert33
-  use dftbp_md_andersentherm, only : init, TAndersenThermostat
-  use dftbp_md_berendsentherm, only : init, TBerendsenThermostat
-  use dftbp_md_dummytherm, only : init, TDummyThermostat
+  use dftbp_md_thermostats, only : createThermostat, thermostatTypes, TThermostat
   use dftbp_md_mdcommon, only : init, TMDCommon, TMDOutput
   use dftbp_md_mdintegrator, only : init, TMDIntegrator
-  use dftbp_md_nhctherm, only : init, TNHCThermostat
   use dftbp_md_tempprofile, only : TempProfile_init, TTempProfile
-  use dftbp_md_thermostat, only : init, TThermostat
   use dftbp_md_velocityverlet, only : init, TVelocityVerlet
   use dftbp_md_xlbomd, only : TXLBOMD, Xlbomd_init
   use dftbp_mixer_factory, only : TMixerFactoryCmplx, TMixerFactoryReal
@@ -383,9 +380,6 @@ module dftbp_dftbplus_initprogram
     !> Choice of electron distribution function, defaults to Fermi
     integer :: iDistribFn = fillingTypes%Fermi
 
-    !> Atomic kinetic temperature
-    real(dp) :: tempAtom
-
     !> MD stepsize
     real(dp) :: deltaT
 
@@ -546,7 +540,7 @@ module dftbp_dftbplus_initprogram
     !> Response property calculations
     type(TResponse), allocatable :: response
 
-    !> Static polarisability
+    !> Response wrt to external electric field
     logical :: isEResp = .false.
 
     !> Derivatives with respect to atomic positions
@@ -1244,11 +1238,7 @@ contains
     type(TFire), allocatable :: pFireLat
 
     ! MD related local variables
-    type(TThermostat), allocatable :: pThermostat
-    type(TDummyThermostat), allocatable :: pDummyTherm
-    type(TAndersenThermostat), allocatable :: pAndersenTherm
-    type(TBerendsenThermostat), allocatable :: pBerendsenTherm
-    type(TNHCThermostat), allocatable :: pNHCTherm
+    class(TThermostat), allocatable :: thermostat
 
     type(TVelocityVerlet), allocatable :: pVelocityVerlet
     type(TTempProfile), pointer :: pTempProfile
@@ -1862,7 +1852,6 @@ contains
         & this%nDipole, this%nQuadrupole)
     allocate(this%iSparseStart(0, this%nAtom))
 
-    this%tempAtom = input%ctrl%tempAtom
     this%deltaT = input%ctrl%deltaT
 
     ! Orbital equivalency relations
@@ -2063,7 +2052,7 @@ contains
     this%nMovedCoord = 3 * this%nMovedAtom
 
     if (input%ctrl%maxRun == -1) then
-      this%nGeoSteps = huge(1)
+      this%nGeoSteps = hugeIterations
     else
       this%nGeoSteps = input%ctrl%maxRun
     end if
@@ -2093,6 +2082,9 @@ contains
       this%displ(:) = 0.0_dp
       this%elast = 0.0_dp
       this%nGeoSteps = input%ctrl%geoOpt%nGeoSteps
+      if (this%nGeoSteps == -1) then
+        this%nGeoSteps = hugeIterations
+      end if
       this%geoOutFile = input%ctrl%geoOpt%outFile
     end if
 
@@ -2316,7 +2308,7 @@ contains
           call createSolvationModel(this%solvation, input%ctrl%solvInp%GBInp, &
               & this%nAtom, this%species0, this%speciesName, errStatus)
         end if
-        this%areSolventNeighboursSym = .false.
+        this%areSolventNeighboursSym = .true.
       else if (allocated(input%ctrl%solvInp%CosmoInp)) then
         if (this%tPeriodic) then
           call createSolvationModel(this%solvation, input%ctrl%solvInp%CosmoInp, &
@@ -2334,7 +2326,7 @@ contains
           call createSolvationModel(this%solvation, input%ctrl%solvInp%SASAInp, &
               & this%nAtom, this%species0, this%speciesName, errStatus)
         end if
-        this%areSolventNeighboursSym = .false.
+        this%areSolventNeighboursSym = .true.
       end if
       if (errStatus%hasError()) then
         call error(errStatus%message)
@@ -2533,8 +2525,12 @@ contains
       end if
 
       if (this%isEResp) then
-        allocate(this%polarisability(3, 3, size(this%dynRespEFreq)))
-        this%polarisability(:,:,:) = 0.0_dp
+        if (this%boundaryCond%iBoundaryCondition == boundaryCondsEnum%cluster) then
+          allocate(this%polarisability(3, 3, size(this%dynRespEFreq)), source=0.0_dp)
+        else
+          call warning("Electric field polarisability not currently available for this boundary&
+              & condition")
+        end if
         if (input%ctrl%tWriteBandDat) then
           ! only one frequency at the moment if dynamic!
           allocate(this%dEidE(this%denseDesc%fullSize, this%nKpoint, this%nIndepSpin, 3))
@@ -2676,66 +2672,31 @@ contains
       allocate(this%pMDFrame)
       call init(this%pMDFrame, this%nMovedAtom, this%nAtom, input%ctrl%tMDstill)
 
-      ! Create temperature profile, if thermostat is not the dummy one
-      if (input%ctrl%iThermostat /= 0) then
-        allocate(this%temperatureProfile)
-        call TempProfile_init(this%temperatureProfile, input%ctrl%tempMethods,&
-            & input%ctrl%tempSteps, input%ctrl%tempValues)
-        pTempProfile => this%temperatureProfile
-      else
-        nullify(pTempProfile)
-      end if
+      allocate(this%temperatureProfile)
+      call TempProfile_init(this%temperatureProfile, input%ctrl%tempProfileInp)
+      pTempProfile => this%temperatureProfile
 
       ! Create thermostat
-      allocate(pThermostat)
-      select case (input%ctrl%iThermostat)
-      case (0) ! No thermostat
-        allocate(pDummyTherm)
-        call init(pDummyTherm, this%tempAtom, this%mass(this%indMovedAtom), randomThermostat,&
-            & this%pMDFrame)
-        call init(pThermostat, pDummyTherm)
-      case (1) ! Andersen thermostat
-        allocate(pAndersenTherm)
-        call init(pAndersenTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-            & input%ctrl%tRescale, input%ctrl%wvScale, this%pMDFrame)
-        call init(pThermostat, pAndersenTherm)
-      case (2) ! Berendsen thermostat
-        allocate(pBerendsenTherm)
-        call init(pBerendsenTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-            & input%ctrl%wvScale, this%pMDFrame)
-        call init(pThermostat, pBerendsenTherm)
-      case (3) ! Nose-Hoover-Chain thermostat
-        allocate(pNHCTherm)
-        if (input%ctrl%tInitNHC) then
-          call init(pNHCTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-              & input%ctrl%wvScale, this%pMDFrame, input%ctrl%deltaT, input%ctrl%nh_npart,&
-              & input%ctrl%nh_nys, input%ctrl%nh_nc, input%ctrl%xnose, input%ctrl%vnose,&
-              & input%ctrl%gnose)
-        else
-          call init(pNHCTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-              & input%ctrl%wvScale, this%pMDFrame, input%ctrl%deltaT, input%ctrl%nh_npart,&
-              & input%ctrl%nh_nys, input%ctrl%nh_nc)
-        end if
-        call init(pThermostat, pNHCTherm)
-      end select
+      call createThermostat(thermostat, input%ctrl%thermostatInp, this%mass(this%indMovedAtom),&
+          & randomThermostat, this%pMDFrame, pTempProfile, this%deltaT)
 
       ! Create MD integrator
       allocate(pVelocityVerlet)
       if (input%ctrl%tReadMDVelocities) then
         if (this%tBarostat) then
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & input%ctrl%initialVelocities, this%BarostatStrength, this%extPressure,&
               & input%ctrl%tIsotropic)
         else
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & input%ctrl%initialVelocities, .true., .false.)
         end if
       else
         if (this%tBarostat) then
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & this%BarostatStrength, this%extPressure, input%ctrl%tIsotropic)
         else
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & input%ctrl%initialVelocities, .false., .false.)
         end if
       end if
@@ -2747,7 +2708,7 @@ contains
 
     ! Check for extended Born-Oppenheimer MD
     if (this%isXlbomd) then
-      if (input%ctrl%iThermostat /= 0) then
+      if (input%ctrl%thermostatInp%thermostatType /= thermostatTypes%dummy) then
         call error("XLBOMD does not work with thermostats yet")
       elseif (this%tBarostat) then
         call error("XLBOMD does not work with barostats yet")
@@ -3273,8 +3234,8 @@ contains
     call checkStackSize(env)
 
     if (input%ctrl%tMD) then
-      select case(input%ctrl%iThermostat)
-      case (0)
+      select case(input%ctrl%thermostatInp%thermostatType)
+      case (thermostatTypes%dummy)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)") 'MD without scaling of velocities',&
               & '(a.k.a. "NPE" ensemble)'
@@ -3282,7 +3243,7 @@ contains
           write(stdOut, "('Mode:',T30,A,/,T30,A)") 'MD without scaling of velocities',&
               & '(a.k.a. NVE ensemble)'
         end if
-      case (1)
+      case (thermostatTypes%andersen)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)")&
               & "MD with re-selection of velocities according to temperature",&
@@ -3292,7 +3253,7 @@ contains
               & "MD with re-selection of velocities according to temperature",&
               & "(a.k.a. NVT ensemble using Andersen thermostating)"
         end if
-      case(2)
+      case(thermostatTypes%berendsen)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)")&
               & "MD with scaling of velocities according to temperature",&
@@ -3302,7 +3263,7 @@ contains
               & "MD with scaling of velocities according to temperature",&
               & "(a.k.a. 'not' NVT ensemble using Berendsen thermostating)"
         end if
-      case(3)
+      case(thermostatTypes%nhc)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)")"MD with scaling of velocities according to",&
               & "Nose-Hoover-Chain thermostat + Berensen barostat"
@@ -3314,7 +3275,9 @@ contains
       case default
         call error("Unknown thermostat mode")
       end select
-    elseif (this%isGeoOpt) then
+
+    elseif (this%isGeoOpt .or. allocated(this%geoOpt)) then
+
       if (allocated(this%conAtom)) then
         strTmp = "with constraints"
       else
@@ -3334,6 +3297,8 @@ contains
       case (geoOptTypes%fire)
         write(stdout, "('Mode:',T30,A)") 'FIRE relaxation' // trim(strTmp)
         tGeoOptRequiresEgy = .false.
+      case (geoOptTypes%geometryoptimisation)
+        write(stdout, "('Mode:',T30,A)") 'Geometry optimisation relaxation'
       case default
         call error("Unknown optimisation mode")
       end select
@@ -3488,8 +3453,14 @@ contains
     if (this%tCoordOpt) then
       write(stdOut, "(A,':',T30,I14)") "Nr. of moved atoms", this%nMovedAtom
     end if
+    if (this%isGeoOpt .or. allocated(this%geoOpt)) then
+      if (this%nGeoSteps == hugeIterations) then
+        write(stdOut, "(A,':',T30,I14)") "Max. nr. of geometry steps", -1
+      else
+        write(stdOut, "(A,':',T30,I14)") "Max. nr. of geometry steps", this%nGeoSteps
+      end if
+    end if
     if (this%isGeoOpt) then
-      write(stdOut, "(A,':',T30,I14)") "Max. nr. of geometry steps", this%nGeoSteps
       write(stdOut, "(A,':',T30,E14.6)") "Force tolerance", input%ctrl%maxForce
       if (input%ctrl%iGeoOpt == geoOptTypes%steepestDesc) then
         write(stdOut, "(A,':',T30,E14.6)") "Step size", this%deltaT
@@ -3526,11 +3497,13 @@ contains
     end if
     if (this%tMD) then
       write(stdOut, "(A,':',T30,E14.6)") "Time step", this%deltaT
-      if (input%ctrl%iThermostat == 0 .and. .not.input%ctrl%tReadMDVelocities) then
-        write(stdOut, "(A,':',T30,E14.6)") "Temperature", this%tempAtom
+      if (input%ctrl%thermostatInp%thermostatType == thermostatTypes%dummy&
+          & .and. .not.input%ctrl%tReadMDVelocities) then
+        write(stdOut, "(A,':',T30,E14.6)") "Temperature", input%ctrl%tempProfileInp%tempValues(1)
       end if
-      if (input%ctrl%tRescale) then
-        write(stdOut, "(A,':',T30,E14.6)") "Rescaling probability", input%ctrl%wvScale
+      if (input%ctrl%thermostatInp%thermostatType == thermostatTypes%andersen) then
+        write(stdOut, "(A,':',T30,E14.6)") "Rescaling probability",&
+            & input%ctrl%thermostatInp%andersen%rescaleProb
       end if
     end if
 
@@ -5274,6 +5247,12 @@ contains
             allocate(this%excitedDerivs(3, this%nAtom, 1))
         end if
         this%isCIopt = this%linearResponse%isCIopt
+        if (this%isCIopt) then
+          ! Currently always using Bearpark algorithm:
+          write(stdOut, "('Conical Intersection finder:',T30,A)") 'Bearpark'
+          write(stdOut, format2Ue) "CI finder level shift", this%linearResponse%energyShiftCI, 'H',&
+              & Hartree__eV * this%linearResponse%energyShiftCI, 'eV'
+        end if
       end if
     end if
 
