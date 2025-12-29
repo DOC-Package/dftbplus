@@ -119,15 +119,15 @@ following architectures:
 | Linux         |                      |             | ScaLAPACK 2.2,   |     |
 |               |                      |             | ELSI 2.9         |     |
 +---------------+----------------------+-------------+------------------+-----+
-| x86_64 /      | GNU Fortran/C 13.2   | OpenMPI 5.0 | OpenBlas 0.3.29, |     |
+| x86_64 /      | GNU Fortran/C 14.2   | OpenMPI 5.0 | OpenBlas 0.3.29, |     |
 | Linux         |                      |             | ScaLAPACK 2.2,   |     |
 |               |                      |             | ELSI 2.11        |     |
 +---------------+----------------------+-------------+------------------+-----+
 | x86_64 /      | Intel Fortran/C      | IntelMPI    | MKL 2022.0,      |     |
-| Linux         | 2021.5               | 2021.14     | ELSI 2.8         |     |
+| Linux         | 2022.0               | 2021.5      | ELSI 2.8         |     |
 +---------------+----------------------+-------------+------------------+-----+
 | x86_64 /      | Intel Fortran/C      | IntelMPI    | MKL 2024.2,      |     |
-| Linux         | 2024.2               | 2021.14     | ELSI 2.9         |     |
+| Linux         | 2024.2               | 2021.14     | ELSI 2.11        |     |
 +---------------+----------------------+-------------+------------------+-----+
 | x86_64 /      | Intel Fortran/C      | IntelMPI    | MKL 2025.0,      |     |
 | Linux         | 2025.0               | 2021.14     | ELSI 2.11        |     |
@@ -405,6 +405,8 @@ the ``WITH_API`` option to ``TRUE`` in the CMake config file
 library, the C-include file and the Fortran module files, which are necessary
 for linking DFTB+ with C and Fortran programs.
 
+The binding for the `ASI <https://gitlab.com/pvst/asi/>`_ API for data
+extraction/provision are also supported.
 
 DFTB+ CMake library options
 ---------------------------
