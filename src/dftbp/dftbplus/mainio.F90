@@ -4654,14 +4654,28 @@ contains
 
 
   !> Prints the line above the start of the SCC cycle data (Modified by Hideaki Takahashi).
-  subroutine printSccHeader(tElecConstraint)
+  subroutine printSccHeader(tElecConstraint, nConstr)
 
     !> Is there electronic constraint
     logical, intent(in), optional :: tElecConstraint
 
+    !> Number of constraints
+    integer, intent(in), optional :: nConstr
+
+    integer :: ii
+    character(len=100) :: vcHeader
+
     if (present(tElecConstraint) .and. tElecConstraint) then
-      write(stdOut, "(A5, A18, A18, A18, A20)") "iSCC", " Total electronic ", &
-          & "  Diff electronic ", "     SCC error    ", "         Vc       "
+      vcHeader = ""
+      if (present(nConstr)) then
+        do ii = 1, nConstr
+          write(vcHeader, "(A,A,I0,A)") trim(vcHeader), "       Vc(", ii, ")        "
+        end do
+      else
+        vcHeader = "         Vc       "
+      end if
+      write(stdOut, "(A5, A18, A18, A18, A)") "iSCC", " Total electronic ", &
+          & "  Diff electronic ", "     SCC error    ", trim(vcHeader)
     else
       write(stdOut, "(A5, A18, A18, A18)") "iSCC", " Total electronic ", &
           & "  Diff electronic ", "     SCC error    "
@@ -4671,10 +4685,25 @@ contains
 
 
   !> Prints the line above the start of the electronic constraints cycle data (Modified by Hideaki Takahashi).
-  subroutine printElecConstrHeader()
+  subroutine printElecConstrHeader(nConstr)
 
-    write(stdOut, "(A6,A5,4A18)") repeat(" ", 6), "iConst", "  Total electronic",&
-        & "     max(dW/dVc)  ", "     dW           ", "     Vc           "
+    !> Number of constraints
+    integer, intent(in), optional :: nConstr
+
+    integer :: ii
+    character(len=200) :: vcHeader
+
+    vcHeader = ""
+    if (present(nConstr)) then
+      do ii = 1, nConstr
+        write(vcHeader, "(A,A,I0,A)") trim(vcHeader), "       Vc(", ii, ")        "
+      end do
+    else
+      vcHeader = "     Vc           "
+    end if
+
+    write(stdOut, "(A6,A5,3A18,A)") repeat(" ", 6), "iConst", "  Total electronic",&
+        & "     max(dW/dVc)  ", "     dW           ", trim(vcHeader)
 
   end subroutine printElecConstrHeader
 
@@ -4723,11 +4752,15 @@ contains
     type(TElecConstraint), intent(in), optional :: elecConstraint
 
     real(dp), allocatable :: Vc(:)
-    integer :: nConstr
+    integer :: nConstr, ii
+    character(len=200) :: fmtStr, vcStr
 
     if (present(elecConstraint)) then
       Vc = elecConstraint%getVc()
-      write(stdOut, "(I5,4E18.8)") iSccIter, Eelec, diffElec, sccErrorQ, Vc(1)
+      nConstr = size(Vc)
+      ! Build format string for all Vc values
+      write(fmtStr, "(A,I0,A)") "(I5,3E18.8,", nConstr, "E18.8)"
+      write(stdOut, trim(fmtStr)) iSccIter, Eelec, diffElec, sccErrorQ, Vc(:)
     else
       write(stdOut, "(I5,3E18.8)") iSccIter, Eelec, diffElec, sccErrorQ
     end if
@@ -4756,6 +4789,9 @@ contains
     !> Current constraint potentials
     real(dp), allocatable :: Vc(:)
 
+    integer :: nConstr
+    character(len=200) :: fmtStr
+
     ! Sum up all free energy contributions
     deltaWTotal = elecConstraint%getFreeEnergy()
 
@@ -4764,8 +4800,11 @@ contains
 
     ! Get current constraint potentials
     Vc = elecConstraint%getVc()
+    nConstr = size(Vc)
 
-    write(stdOut, "(T6,I5,4E18.8)") iConstrIter, Eelec, deltaWTotal, dWdVcMax, Vc(1)
+    ! Build format string for all Vc values
+    write(fmtStr, "(A,I0,A)") "(T6,I5,3E18.8,", nConstr, "E18.8)"
+    write(stdOut, trim(fmtStr)) iConstrIter, Eelec, dWdVcMax, deltaWTotal, Vc(:)
 
   end subroutine printElecConstrInfo
 

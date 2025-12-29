@@ -1023,7 +1023,13 @@ contains
 
       call getSccInfo(iSccIter, this%dftbEnergy(this%deltaDftb%iDeterminant)%Eelec, Eold,&
           & diffElec)
-      if (this%tNegf) call printSccHeader(allocated(this%elecConstraint))
+      if (this%tNegf) then
+        if (allocated(this%elecConstraint)) then
+          call printSccHeader(allocated(this%elecConstraint), this%elecConstraint%getNConstr())
+        else
+          call printSccHeader(allocated(this%elecConstraint))
+        end if
+      end if
 
       tWriteSccRestart = env%tGlobalLead .and. needsSccRestartWriting(this%restartFreq,&
           & iGeoStep, iSccIter, this%minSccIter, this%maxSccIter, this%tMd,&
@@ -1318,8 +1324,14 @@ contains
     end if
 
     if (.not.this%tRestartNoSC) then
-      call initSccLoop(this%tSccCalc, this%xlbomdIntegrator, this%minSccIter, this%maxSccIter,&
-        & this%sccTol, tConverged, this%tNegf, this%reks, allocated(this%elecConstraint))
+      if (allocated(this%elecConstraint)) then
+        call initSccLoop(this%tSccCalc, this%xlbomdIntegrator, this%minSccIter, this%maxSccIter,&
+          & this%sccTol, tConverged, this%tNegf, this%reks, allocated(this%elecConstraint),&
+          & this%elecConstraint%getNConstr())
+      else
+        call initSccLoop(this%tSccCalc, this%xlbomdIntegrator, this%minSccIter, this%maxSccIter,&
+          & this%sccTol, tConverged, this%tNegf, this%reks, allocated(this%elecConstraint))
+      end if
     else
       tConverged = .true.
     end if
@@ -1454,7 +1466,7 @@ contains
 
         if (allocated(this%elecConstraint)) then
           nConstrIter = this%elecConstraint%getMaxIter()
-          call printElecConstrHeader()
+          call printElecConstrHeader(this%elecConstraint%getNConstr())
           call this%elecConstraint%resetOptimizer()
         else
           nConstrIter = 1
@@ -2709,7 +2721,7 @@ contains
 
   !> Initialise basic variables before the scc loop (modified by Hideaki Takahashi).
   subroutine initSccLoop(tSccCalc, xlbomdIntegrator, minSccIter, maxSccIter, sccTol, tConverged,&
-      & tNegf, reks, tElecConstraint)
+      & tNegf, reks, tElecConstraint, nConstr)
 
     !> Is this an SCC calculation?
     logical, intent(in) :: tSccCalc
@@ -2738,6 +2750,9 @@ contains
     !> Is there electronic constraint (optional)
     logical, intent(in), optional :: tElecConstraint
 
+    !> Number of constraints (optional)
+    integer, intent(in), optional :: nConstr
+
     if (allocated(xlbomdIntegrator)) then
       call xlbomdIntegrator%getSCCParameters(minSccIter, maxSccIter, sccTol)
     end if
@@ -2750,8 +2765,12 @@ contains
       end if
     else
       if (tSccCalc .and. .not. tNegf) then
-        if (present(tElecConstraint)) then
-          call printSccHeader(tElecConstraint)
+        if (present(tElecConstraint) .and. tElecConstraint) then
+          if (present(nConstr)) then
+            call printSccHeader(tElecConstraint, nConstr)
+          else
+            call printSccHeader(tElecConstraint)
+          end if
         else
           call printSccHeader()
         end if

@@ -21,6 +21,99 @@ About this fork
 This repository is a fork of DFTB+ modified for Constrained DFT (CDFT)
 development and CDFTB-CI calculations. The following modifications have been made:
 
+**Spin constraint implementation (NEW):**
+
+The original DFTB+ electronic constraints only supported charge (population)
+constraints. This fork adds support for **spin (magnetization) constraints**,
+enabling control of local magnetic moments in spin-polarized calculations.
+
+*Theory:*
+
+In spin-polarized calculations, Mulliken populations are stored in the [q, m]
+representation:
+
+- q = (n_α + n_β) / 2  (charge)
+- m = (n_α - n_β) / 2  (magnetization)
+
+The constraint is applied via ``spinChannelFactors`` which weight the [q, m]
+components:
+
++-------------------+------------------------+----------------------+
+| Constraint Type   | spinChannelFactors     | Constrained Quantity |
++===================+========================+======================+
+| Charge (default)  | [1.0, 0.0]             | q                    |
++-------------------+------------------------+----------------------+
+| Magnetization     | [0.0, 1.0]             | m                    |
++-------------------+------------------------+----------------------+
+| Alpha only        | [1.0, 1.0]             | q + m = n_α          |
++-------------------+------------------------+----------------------+
+| Beta only         | [1.0, -1.0]            | q - m = n_β          |
++-------------------+------------------------+----------------------+
+
+*New input keywords:*
+
+- ``TotalSpin``: Constrain total spin magnetization over specified atoms
+- ``Spins``: Constrain individual atom spin magnetizations
+
+*Usage example (charge constraint only):*
+
+::
+
+    ElectronicConstraints {
+      Constraints {
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalCharge = 1.0
+        }
+      }
+    }
+
+*Usage example (spin constraint only):*
+
+::
+
+    ElectronicConstraints {
+      Constraints {
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalSpin = 1.0
+        }
+      }
+    }
+
+*Usage example (simultaneous charge and spin constraints):*
+
+::
+
+    ElectronicConstraints {
+      Constraints {
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalCharge = 1.0
+        }
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalSpin = 2.0
+        }
+      }
+      Optimiser {
+        FIRE {}
+      }
+      ConstrTolerance = 1e-4
+      MaxConstrIterations = 200
+      ConvergentConstrOnly = Yes
+    }
+
+*Implementation details:*
+
+- Added spin channel type constants (``spinChannelCharge``, ``spinChannelMagnetization``,
+  ``spinChannelAlpha``, ``spinChannelBeta``) in ``elecconstraints.F90``
+- Modified ``readMullikenConstraintInputs`` to parse ``TotalSpin`` and ``Spins`` keywords
+- ``spinChannelFactors`` are automatically set based on the constraint type
+- Validation ensures spin constraints are only used in spin-polarized calculations
+- Multiple constraints (charge + spin) can be applied simultaneously with
+  independent constraint potentials (Vc)
+
 **Enhanced output for electronic constraints:**
 
 - Added ``Vc`` (constraint potential) output to SCC iteration information
@@ -31,9 +124,13 @@ development and CDFTB-CI calculations. The following modifications have been mad
   after convergence (``writeFinalVc`` in ``main.F90``)
 - Added getter functions (``getVc``, ``getDeviation``, ``getNConstr``) to
   ``TElecConstraint`` type for accessing constraint data (``elecconstraints.F90``)
+- **Multiple Vc output**: When multiple constraints are present (e.g., charge + spin),
+  all Vc values are displayed as ``Vc(1)``, ``Vc(2)``, etc.
 
 These modifications are useful for:
 
+- Controlling local spin states in magnetic systems
+- Studying spin-dependent charge transfer processes
 - Monitoring constraint convergence during SCC iterations
 - Extracting final constraint potentials for CDFTB-CI coupling calculations
 - Debugging and analysis of constrained DFT calculations
