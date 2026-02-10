@@ -3389,6 +3389,11 @@ contains
       write(fd, format2U) 'Energy ext. field', energy%Eext, 'H', energy%Eext * Hartree__eV, 'eV'
     end if
 
+    if (abs(energy%EPointCharge) > 0.0_dp) then
+      write(fd, format2U) 'Energy point charges', energy%EPointCharge, 'H',&
+          & energy%EPointCharge * Hartree__eV, 'eV'
+    end if
+
     if (tSolv) then
       write(fd, format2U) 'Solvation energy', energy%ESolv, 'H', energy%ESolv * Hartree__eV, 'eV'
     end if

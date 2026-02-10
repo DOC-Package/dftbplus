@@ -224,6 +224,9 @@ contains
         call sccCalc%getEnergyPerAtom(energy%atomSCC)
       end if
       energy%Escc = sum(energy%atomSCC(iAtInCentralRegion))
+      ! Get point charge energy separately
+      call sccCalc%getPointChargeEnergyPerAtom(energy%atomPointCharge)
+      energy%EPointCharge = sum(energy%atomPointCharge(iAtInCentralRegion))
     end if
 
     if (allocated(sccCalc) .or. allocated(tblite)) then
