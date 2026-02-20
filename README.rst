@@ -142,7 +142,7 @@ These modifications are useful for:
 - ``src/dftbp/dftbplus/mainio.F90``
 
 
-**External point charge energy output (NEW):**
+**External point charge energy output:**
 
 Added separate output for the electrostatic interaction energy between DFTB
 atoms and external point charges in ``detailed.out``.
