@@ -142,6 +142,43 @@ These modifications are useful for:
 - ``src/dftbp/dftbplus/mainio.F90``
 
 
+**External point charge energy output (NEW):**
+
+Added separate output for the electrostatic interaction energy between DFTB
+atoms and external point charges in ``detailed.out``.
+
+*Background:*
+
+When using ``PointCharges`` in QM/MM calculations, the interaction energy
+with external charges was included in the SCC energy (``energy%Escc``) but
+not displayed separately. This makes it difficult to analyze the QM/MM
+coupling energy.
+
+*Implementation:*
+
+- Added ``EPointCharge`` and ``atomPointCharge(:)`` to ``TEnergies`` type
+  for storing point charge interaction energy
+- Added ``getPointChargeEnergyPerAtom`` method to ``TScc`` type to extract
+  the point charge energy contribution separately
+- Modified ``calcEnergies`` in ``getenergies.F90`` to calculate and store
+  the point charge energy
+- Added output line ``Energy point charges`` to ``detailed.out`` when
+  point charges are present (independent of ``isExtField`` flag)
+
+*Output example:*
+
+In ``detailed.out``, a new line appears when external point charges are used::
+
+    Energy point charges       -0.0234567890 H       -0.6384728193 eV
+
+*Modified files:*
+
+- ``src/dftbp/dftb/energytypes.F90``
+- ``src/dftbp/dftb/scc.F90``
+- ``src/dftbp/dftb/getenergies.F90``
+- ``src/dftbp/dftbplus/mainio.F90``
+
+
 Installation
 ============
 
