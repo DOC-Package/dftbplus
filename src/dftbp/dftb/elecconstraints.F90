@@ -9,14 +9,14 @@
 
 !> Module to impose constraints on the electronic ground state.
 module dftbp_dftb_elecconstraints
-  use dftbp_common_accuracy, only : dp
+  use dftbp_common_accuracy, only : dp, hugeIterations
   use dftbp_dftbplus_input_geoopt, only : readOptimizerInput
   use dftbp_extlibs_xmlf90, only : char, destroyNodeList, fnode, fnodeList, getItem1, getLength,&
       & string
   use dftbp_geoopt_package, only : createOptimizer, TOptimizer, TOptimizerInput
   use dftbp_io_hsdutils, only : detailedError, getChild, getChildren, getChildValue,&
       & getSelectedAtomIndices
-  use dftbp_io_hsdutils2, only : renameChildren
+  use dftbp_io_hsdutils2, only : localiseName
   use dftbp_type_commontypes, only : TOrbitals
   use dftbp_type_typegeometry, only : TGeometry
   use dftbp_type_wrappedintr, only : TWrappedInt1, TWrappedReal2
@@ -25,6 +25,13 @@ module dftbp_dftb_elecconstraints
   private
   public :: TElecConstraint, TElecConstraint_init, TElecConstraintInp
   public :: readElecConstraintInput
+
+
+  !> Spin channel types for constraints
+  integer, parameter :: spinChannelCharge = 1
+  integer, parameter :: spinChannelMagnetization = 2
+  integer, parameter :: spinChannelAlpha = 3
+  integer, parameter :: spinChannelBeta = 4
 
 
   !> Represents the input for a single Mulliken population constraint
@@ -38,6 +45,9 @@ module dftbp_dftb_elecconstraints
 
     !> Spin channel factors (1.0 for channels included in population calculations, 0.0 for rest)
     real(dp), allocatable :: spinChannelFactors(:)
+
+    !> Spin channel type (Charge, Magnetization, Alpha, Beta)
+    integer :: spinChannel = spinChannelCharge
 
     !> Whether constraint values are charges (otherwise they are populations)
     logical :: constrValuesAreCharges = .false.
@@ -188,7 +198,7 @@ contains
 
     type(fnode), pointer :: constrContainer, dummyNode, child1
 
-    call renameChildren(node, "Optimizer", "Optimiser")
+    call localiseName(node, "Optimizer", "Optimiser")
     call getChildValue(node, "Optimiser", child1, "FIRE")
     call readOptimizerInput(child1, input%optimiser)
 
@@ -225,9 +235,11 @@ contains
     type(fnodeList), pointer :: constrNodes
     type(fnode), pointer :: constrNode, child1
     type(fnode), pointer :: totalPopNode, populationsNode, totalChargeNode, chargesNode
+    type(fnode), pointer :: totalSpinNode, spinsNode
     type(string) :: buffer
     real(dp) :: rTmp
     integer :: iConstrInp, nConstrInp, nAssociated
+    logical :: isSpinConstr
 
     call getChildren(constrContainer, "MullikenPopulation", constrNodes)
     if (.not. associated(constrNodes)) return
@@ -246,36 +258,80 @@ contains
         call getChild(constrNode, "TotalPopulation", totalPopNode, requested=.false.)
         call getChild(constrNode, "Charges", chargesNode, requested=.false.)
         call getChild(constrNode, "TotalCharge", totalChargeNode, requested=.false.)
+        call getChild(constrNode, "TotalSpin", totalSpinNode, requested=.false.)
+        call getChild(constrNode, "Spins", spinsNode, requested=.false.)
+
         nAssociated = count([associated(populationsNode), associated(totalPopNode), &
-            & associated(chargesNode), associated(totalChargeNode)])
+            & associated(chargesNode), associated(totalChargeNode), &
+            & associated(totalSpinNode), associated(spinsNode)])
         if (nAssociated /= 1) then
           call detailedError(constrNode, "You must specify exactly one and only one of the options&
-              & Populations, TotalPopulation, Charges or TotalCharge")
+              & Populations, TotalPopulation, Charges, TotalCharge, TotalSpin or Spins")
         end if
+
+        ! Determine if this is a spin (magnetization) constraint
+        isSpinConstr = associated(totalSpinNode) .or. associated(spinsNode)
+
+        ! Validate spin constraint for non-spin-polarized calculations
+        if (isSpinConstr .and. .not. isSpinPol) then
+          call detailedError(constrNode, "TotalSpin/Spins constraints require spin-polarized &
+              &calculation")
+        end if
+
+        ! Set spin channel based on constraint type
+        if (isSpinConstr) then
+          input%spinChannel = spinChannelMagnetization
+        else
+          input%spinChannel = spinChannelCharge
+        end if
+
         input%constrValuesAreCharges = associated(chargesNode) .or. associated(totalChargeNode)
-        if (associated(populationsNode) .or. associated(chargesNode)) then
+        if (associated(populationsNode) .or. associated(chargesNode) .or. associated(spinsNode)) then
           allocate(input%constrValues(size(input%atoms)), source=0.0_dp)
           if (associated(populationsNode)) then
             call getChildValue(populationsNode, "", input%constrValues)
-          else
+          else if (associated(chargesNode)) then
             call getChildValue(chargesNode, "", input%constrValues)
+          else
+            call getChildValue(spinsNode, "", input%constrValues)
           end if
         else
           if (associated(totalPopNode)) then
             call getChildValue(totalPopNode, "", rTmp)
-          else
+          else if (associated(totalChargeNode)) then
             call getChildValue(totalChargeNode, "", rTmp)
+          else
+            call getChildValue(totalSpinNode, "", rTmp)
           end if
           input%constrValues = [rTmp]
         end if
 
-        ! Functionality currently restricted to charge channel only
+        ! Set spinChannelFactors based on spin channel type
+        ! In [q, m] representation: q = (n_alpha + n_beta)/2, m = (n_alpha - n_beta)/2
+        ! n_alpha = q + m, n_beta = q - m
         if (isSpinPol) then
-          ! [q, m] representation
           if (is2Component) then
-            input%spinChannelFactors = [1.0_dp, 0.0_dp, 0.0_dp, 0.0_dp]
+            select case (input%spinChannel)
+            case (spinChannelCharge)
+              input%spinChannelFactors = [1.0_dp, 0.0_dp, 0.0_dp, 0.0_dp]
+            case (spinChannelMagnetization)
+              input%spinChannelFactors = [0.0_dp, 1.0_dp, 0.0_dp, 0.0_dp]
+            case (spinChannelAlpha)
+              input%spinChannelFactors = [1.0_dp, 1.0_dp, 0.0_dp, 0.0_dp]
+            case (spinChannelBeta)
+              input%spinChannelFactors = [1.0_dp, -1.0_dp, 0.0_dp, 0.0_dp]
+            end select
           else
-            input%spinChannelFactors = [1.0_dp, 0.0_dp]
+            select case (input%spinChannel)
+            case (spinChannelCharge)
+              input%spinChannelFactors = [1.0_dp, 0.0_dp]
+            case (spinChannelMagnetization)
+              input%spinChannelFactors = [0.0_dp, 1.0_dp]
+            case (spinChannelAlpha)
+              input%spinChannelFactors = [1.0_dp, 1.0_dp]
+            case (spinChannelBeta)
+              input%spinChannelFactors = [1.0_dp, -1.0_dp]
+            end select
           end if
         else
           input%spinChannelFactors = [1.0_dp]
@@ -316,7 +372,7 @@ contains
     call createOptimizer(input%optimiser, this%nConstr, this%optimizer)
 
     if (input%nConstrIter == -1) then
-      this%nConstrIter = huge(1)
+      this%nConstrIter = hugeIterations
     else
       this%nConstrIter = input%nConstrIter
     end if

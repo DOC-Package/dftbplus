@@ -84,7 +84,7 @@ module dftbp_dftbplus_mainio
   public :: openOutputFile
   public :: writeDetailedOut1, writeDetailedOut2, writeDetailedOut2Dets, writeDetailedOut3
   public :: writeDetailedOut4, writeDetailedOut5, writeDetailedOut6, writeDetailedOut7
-  public :: writeDetailedOut8, writeDetailedOut9, writeDetailedOut10
+  public :: writeDetailedOut8, writeDetailedOut9, writeDetailedOut10, permitivityPrint
   public :: writeMdOut1, writeMdOut2
   public :: writeCharges
   public :: writeEsp
@@ -3389,6 +3389,11 @@ contains
       write(fd, format2U) 'Energy ext. field', energy%Eext, 'H', energy%Eext * Hartree__eV, 'eV'
     end if
 
+    if (abs(energy%EPointCharge) > 0.0_dp) then
+      write(fd, format2U) 'Energy point charges', energy%EPointCharge, 'H',&
+          & energy%EPointCharge * Hartree__eV, 'eV'
+    end if
+
     if (tSolv) then
       write(fd, format2U) 'Solvation energy', energy%ESolv, 'H', energy%ESolv * Hartree__eV, 'eV'
     end if
@@ -3890,7 +3895,7 @@ contains
 
 
   !> Tenth group of data for detailed.out (derivatives with respect to an external electric field)
-  subroutine writeDetailedOut10(fd, orb, polarisability, dqOut, dEfdE)
+  subroutine writeDetailedOut10(fd, orb, polarisability, dqOut, dEfdE, omega)
 
     !> File ID
     integer, intent(in) :: fd
@@ -3906,6 +3911,9 @@ contains
 
     !> Derivative of the Fermi energy with respect to electric field
     real(dp), allocatable, intent(in) :: dEfdE(:,:)
+
+    !> Driving frequencies (including potentially 0 for static)
+    real(dp), allocatable, intent(in) :: omega(:)
 
     integer :: iCart, iAt, nAtom, iS, nSpin, iOmega
 
@@ -3955,17 +3963,44 @@ contains
     end if
 
     if (allocated(polarisability)) then
-      write(fd,*)
-      write(fd,"(A)")'Electric polarisability (a.u.)'
-      do iOmega = 1, size(polarisability, dim=3)
-        do iCart = 1, 3
-          write(fd,"(3E20.12)")polarisability(:, iCart, iOmega)
-        end do
-      end do
-      write(fd,*)
+      @:ASSERT(allocated(omega))
+      call permitivityPrint(fd, polarisability, omega)
     end if
 
   end subroutine writeDetailedOut10
+
+
+  !> Print the electric field polarisability
+  subroutine permitivityPrint(fd, polarisability, omega)
+
+    !> File id for data
+    integer, intent(in) :: fd
+
+    !> Electric polarisability
+    real(dp), intent(in) :: polarisability(:,:,:)
+
+    !> Driving frequencies (including potentially 0 for static)
+    real(dp), intent(in) :: omega(:)
+
+    integer :: iCart, iOmega
+
+    write(fd,*)
+    write(fd,*)'Electric field polarisability (a.u.)'
+    do iOmega = 1, size(omega)
+      write(fd,*)
+      if (abs(omega(iOmega)) > epsilon(0.0_dp)) then
+        write(fd, format2U)"Polarisability at omega = ", omega(iOmega), ' H ',&
+            & omega(iOmega) * Hartree__eV, ' eV'
+      else
+        write(fd, *)"Static polarisability:"
+      end if
+      do iCart = 1, 3
+        write(fd,"(3E20.12)")polarisability(:, iCart, iOmega)
+      end do
+    end do
+    write(fd,*)
+
+  end subroutine permitivityPrint
 
 
   !> First group of output data during molecular dynamics
@@ -4624,14 +4659,28 @@ contains
 
 
   !> Prints the line above the start of the SCC cycle data (Modified by Hideaki Takahashi).
-  subroutine printSccHeader(tElecConstraint)
+  subroutine printSccHeader(tElecConstraint, nConstr)
 
     !> Is there electronic constraint
     logical, intent(in), optional :: tElecConstraint
 
+    !> Number of constraints
+    integer, intent(in), optional :: nConstr
+
+    integer :: ii
+    character(len=100) :: vcHeader
+
     if (present(tElecConstraint) .and. tElecConstraint) then
-      write(stdOut, "(A5, A18, A18, A18, A20)") "iSCC", " Total electronic ", &
-          & "  Diff electronic ", "     SCC error    ", "         Vc       "
+      vcHeader = ""
+      if (present(nConstr)) then
+        do ii = 1, nConstr
+          write(vcHeader, "(A,A,I0,A)") trim(vcHeader), "       Vc(", ii, ")        "
+        end do
+      else
+        vcHeader = "         Vc       "
+      end if
+      write(stdOut, "(A5, A18, A18, A18, A)") "iSCC", " Total electronic ", &
+          & "  Diff electronic ", "     SCC error    ", trim(vcHeader)
     else
       write(stdOut, "(A5, A18, A18, A18)") "iSCC", " Total electronic ", &
           & "  Diff electronic ", "     SCC error    "
@@ -4641,10 +4690,25 @@ contains
 
 
   !> Prints the line above the start of the electronic constraints cycle data (Modified by Hideaki Takahashi).
-  subroutine printElecConstrHeader()
+  subroutine printElecConstrHeader(nConstr)
 
-    write(stdOut, "(A6,A5,4A18)") repeat(" ", 6), "iConst", "  Total electronic",&
-        & "     max(dW/dVc)  ", "     dW           ", "     Vc           "
+    !> Number of constraints
+    integer, intent(in), optional :: nConstr
+
+    integer :: ii
+    character(len=200) :: vcHeader
+
+    vcHeader = ""
+    if (present(nConstr)) then
+      do ii = 1, nConstr
+        write(vcHeader, "(A,A,I0,A)") trim(vcHeader), "       Vc(", ii, ")        "
+      end do
+    else
+      vcHeader = "     Vc           "
+    end if
+
+    write(stdOut, "(A6,A5,3A18,A)") repeat(" ", 6), "iConst", "  Total electronic",&
+        & "     max(dW/dVc)  ", "     dW           ", trim(vcHeader)
 
   end subroutine printElecConstrHeader
 
@@ -4693,11 +4757,15 @@ contains
     type(TElecConstraint), intent(in), optional :: elecConstraint
 
     real(dp), allocatable :: Vc(:)
-    integer :: nConstr
+    integer :: nConstr, ii
+    character(len=200) :: fmtStr, vcStr
 
     if (present(elecConstraint)) then
       Vc = elecConstraint%getVc()
-      write(stdOut, "(I5,4E18.8)") iSccIter, Eelec, diffElec, sccErrorQ, Vc(1)
+      nConstr = size(Vc)
+      ! Build format string for all Vc values
+      write(fmtStr, "(A,I0,A)") "(I5,3E18.8,", nConstr, "E18.8)"
+      write(stdOut, trim(fmtStr)) iSccIter, Eelec, diffElec, sccErrorQ, Vc(:)
     else
       write(stdOut, "(I5,3E18.8)") iSccIter, Eelec, diffElec, sccErrorQ
     end if
@@ -4726,6 +4794,9 @@ contains
     !> Current constraint potentials
     real(dp), allocatable :: Vc(:)
 
+    integer :: nConstr
+    character(len=200) :: fmtStr
+
     ! Sum up all free energy contributions
     deltaWTotal = elecConstraint%getFreeEnergy()
 
@@ -4734,8 +4805,11 @@ contains
 
     ! Get current constraint potentials
     Vc = elecConstraint%getVc()
+    nConstr = size(Vc)
 
-    write(stdOut, "(T6,I5,4E18.8)") iConstrIter, Eelec, deltaWTotal, dWdVcMax, Vc(1)
+    ! Build format string for all Vc values
+    write(fmtStr, "(A,I0,A)") "(T6,I5,3E18.8,", nConstr, "E18.8)"
+    write(stdOut, trim(fmtStr)) iConstrIter, Eelec, dWdVcMax, deltaWTotal, Vc(:)
 
   end subroutine printElecConstrInfo
 

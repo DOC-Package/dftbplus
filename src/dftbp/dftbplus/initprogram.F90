@@ -10,7 +10,8 @@
 
 !> Global variables and initialization for the main program.
 module dftbp_dftbplus_initprogram
-  use dftbp_common_accuracy, only : dp, elecTolMax, lc, mc, minTemp, sc, tolEfEquiv, tolSameDist
+  use dftbp_common_accuracy, only : dp, elecTolMax, lc, mc, minTemp, sc, tolEfEquiv, tolSameDist,&
+      & hugeIterations
   use dftbp_common_atomicmass, only : getAtomicMass
   use dftbp_common_coherence, only : checkExactCoherence, checkToleranceCoherence
   use dftbp_common_constants, only : amu__au, au__ps, Bohr__AA, Bohr__nm, Boltzmann, Hartree__eV,&
@@ -66,6 +67,7 @@ module dftbp_dftbplus_initprogram
   use dftbp_dftb_spin, only : qm2ud, Spin_getOrbitalEquiv, ud2qm
   use dftbp_dftb_thirdorder, only : ThirdOrder_init, TThirdOrder, TThirdOrderInp
   use dftbp_dftb_uniquehubbard, only : TUniqueHubbard, TUniqueHubbard_init
+  use dftbp_dftbplus_apicallback, only : TAPICallback
   use dftbp_dftbplus_forcetypes, only : forceTypes
   use dftbp_dftbplus_inputdata, only : TBlacsOpts, TControl, THybridXcInp, TInputData,&
       & TParallelOpts
@@ -73,6 +75,7 @@ module dftbp_dftbplus_initprogram
       & fStopDriver, fStopSCC, hessianOut, mdOut, resultsTag, userOut
   use dftbp_dftbplus_qdepextpotproxy, only : TQDepExtPotProxy
   use dftbp_dftbplus_transportio, only : readContactShifts
+  use dftbp_elecsolvers_dmsolvertypes, only : densityMatrixTypes
   use dftbp_elecsolvers_elecsolvers, only : electronicSolverTypes, TElectronicSolver,&
       & TElectronicSolver_init
   use dftbp_elecsolvers_elsisolver, only : TElsiSolver_final, TElsiSolver_init
@@ -98,14 +101,10 @@ module dftbp_dftbplus_initprogram
   use dftbp_math_randomgenpool, only : init, TRandomGenPool
   use dftbp_math_ranlux, only : getRandom, TRanlux
   use dftbp_math_simplealgebra, only : determinant33, diagonal, invert33
-  use dftbp_md_andersentherm, only : init, TAndersenThermostat
-  use dftbp_md_berendsentherm, only : init, TBerendsenThermostat
-  use dftbp_md_dummytherm, only : init, TDummyThermostat
+  use dftbp_md_thermostats, only : createThermostat, thermostatTypes, TThermostat
   use dftbp_md_mdcommon, only : init, TMDCommon, TMDOutput
   use dftbp_md_mdintegrator, only : init, TMDIntegrator
-  use dftbp_md_nhctherm, only : init, TNHCThermostat
   use dftbp_md_tempprofile, only : TempProfile_init, TTempProfile
-  use dftbp_md_thermostat, only : init, TThermostat
   use dftbp_md_velocityverlet, only : init, TVelocityVerlet
   use dftbp_md_xlbomd, only : TXLBOMD, Xlbomd_init
   use dftbp_mixer_factory, only : TMixerFactoryCmplx, TMixerFactoryReal
@@ -149,7 +148,7 @@ module dftbp_dftbplus_initprogram
   implicit none
 
   private
-  public :: TDftbPlusMain, TNegfInt
+  public :: TDangerousChange, TDftbPlusMain, TNegfInt
   public :: initReferenceCharges, updateReferenceShellCharges, initElectronNumber
 #:if WITH_TRANSPORT
   public :: overrideContactCharges
@@ -166,6 +165,16 @@ module dftbp_dftbplus_initprogram
   end type TNegfInt
 
 #:endif
+
+
+  !> Structure for calculations where changing the quantities are dangerous for calculation
+  !! reliability/correctness
+  type TDangerousChange
+    !> Hamiltonian matrix
+    logical :: hamiltonian = .false.
+    !> Overlap matrix
+    logical :: overlap = .false.
+  end type TDangerousChange
 
 
   type :: TDftbPlusMain
@@ -383,9 +392,6 @@ module dftbp_dftbplus_initprogram
     !> Choice of electron distribution function, defaults to Fermi
     integer :: iDistribFn = fillingTypes%Fermi
 
-    !> Atomic kinetic temperature
-    real(dp) :: tempAtom
-
     !> MD stepsize
     real(dp) :: deltaT
 
@@ -546,7 +552,7 @@ module dftbp_dftbplus_initprogram
     !> Response property calculations
     type(TResponse), allocatable :: response
 
-    !> Static polarisability
+    !> Response wrt to external electric field
     logical :: isEResp = .false.
 
     !> Derivatives with respect to atomic positions
@@ -1163,9 +1169,17 @@ module dftbp_dftbplus_initprogram
     type(TBoundaryConds) :: boundaryCond
 
     !> Whether the order of the atoms matter. Typically the case, when properties were specified
-    !> based on atom numbers (e.g. custom occupations). In that case setting a different order
-    !> of the atoms via the API is forbidden.
+    !! based on atom numbers (e.g. custom occupations). In that case setting a different order
+    !! of the atoms via the API is forbidden.
     logical :: atomOrderMatters = .false.
+
+    !> This object encapsulates subroutines and variables that are used for registering and
+    !! invocation of the density, overlap, and hamiltonian matrices exporting callbacks.
+    type(TAPICallback), allocatable :: apiCallBack
+
+    !> Lists changes that are dangerous for calculation reliability/correctness if these quantities
+    !! are changed
+    type(TDangerousChange) :: dangerousChanges
 
   #:if WITH_SCALAPACK
 
@@ -1244,11 +1258,7 @@ contains
     type(TFire), allocatable :: pFireLat
 
     ! MD related local variables
-    type(TThermostat), allocatable :: pThermostat
-    type(TDummyThermostat), allocatable :: pDummyTherm
-    type(TAndersenThermostat), allocatable :: pAndersenTherm
-    type(TBerendsenThermostat), allocatable :: pBerendsenTherm
-    type(TNHCThermostat), allocatable :: pNHCTherm
+    class(TThermostat), allocatable :: thermostat
 
     type(TVelocityVerlet), allocatable :: pVelocityVerlet
     type(TTempProfile), pointer :: pTempProfile
@@ -1363,6 +1373,12 @@ contains
       this%nSpin = 2
     end if
     this%nIndepSpin = this%nSpin
+
+  #:if WITH_API
+    if (input%ctrl%isASICallbackEnabled) then
+      allocate(this%apiCallBack)
+    end if
+  #:endif
 
     this%tSpinSharedEf = input%ctrl%tSpinSharedEf
     this%tSpinOrbit = input%ctrl%tSpinOrbit
@@ -1682,7 +1698,7 @@ contains
         & this%tFixEf, this%tSetFillingTemp, this%tFillKSep)
 
     call ensureSolverCompatibility(input%ctrl%solver%iSolver, this%kPoint, input%ctrl%parallelOpts,&
-        & this%nIndepSpin, this%tempElec)
+        & this%nIndepSpin, this%tempElec, input%ctrl%isASICallbackEnabled)
     nBufferedCholesky = countBufferedCholesky_(this%tRealHS, this%parallelKS%nLocalKS)
     call TElectronicSolver_init(this%electronicSolver, input%ctrl%solver%iSolver, nBufferedCholesky)
 
@@ -1862,7 +1878,6 @@ contains
         & this%nDipole, this%nQuadrupole)
     allocate(this%iSparseStart(0, this%nAtom))
 
-    this%tempAtom = input%ctrl%tempAtom
     this%deltaT = input%ctrl%deltaT
 
     ! Orbital equivalency relations
@@ -2063,7 +2078,7 @@ contains
     this%nMovedCoord = 3 * this%nMovedAtom
 
     if (input%ctrl%maxRun == -1) then
-      this%nGeoSteps = huge(1)
+      this%nGeoSteps = hugeIterations
     else
       this%nGeoSteps = input%ctrl%maxRun
     end if
@@ -2093,6 +2108,9 @@ contains
       this%displ(:) = 0.0_dp
       this%elast = 0.0_dp
       this%nGeoSteps = input%ctrl%geoOpt%nGeoSteps
+      if (this%nGeoSteps == -1) then
+        this%nGeoSteps = hugeIterations
+      end if
       this%geoOutFile = input%ctrl%geoOpt%outFile
     end if
 
@@ -2316,7 +2334,7 @@ contains
           call createSolvationModel(this%solvation, input%ctrl%solvInp%GBInp, &
               & this%nAtom, this%species0, this%speciesName, errStatus)
         end if
-        this%areSolventNeighboursSym = .false.
+        this%areSolventNeighboursSym = .true.
       else if (allocated(input%ctrl%solvInp%CosmoInp)) then
         if (this%tPeriodic) then
           call createSolvationModel(this%solvation, input%ctrl%solvInp%CosmoInp, &
@@ -2334,7 +2352,7 @@ contains
           call createSolvationModel(this%solvation, input%ctrl%solvInp%SASAInp, &
               & this%nAtom, this%species0, this%speciesName, errStatus)
         end if
-        this%areSolventNeighboursSym = .false.
+        this%areSolventNeighboursSym = .true.
       end if
       if (errStatus%hasError()) then
         call error(errStatus%message)
@@ -2533,8 +2551,12 @@ contains
       end if
 
       if (this%isEResp) then
-        allocate(this%polarisability(3, 3, size(this%dynRespEFreq)))
-        this%polarisability(:,:,:) = 0.0_dp
+        if (this%boundaryCond%iBoundaryCondition == boundaryCondsEnum%cluster) then
+          allocate(this%polarisability(3, 3, size(this%dynRespEFreq)), source=0.0_dp)
+        else
+          call warning("Electric field polarisability not currently available for this boundary&
+              & condition")
+        end if
         if (input%ctrl%tWriteBandDat) then
           ! only one frequency at the moment if dynamic!
           allocate(this%dEidE(this%denseDesc%fullSize, this%nKpoint, this%nIndepSpin, 3))
@@ -2676,66 +2698,31 @@ contains
       allocate(this%pMDFrame)
       call init(this%pMDFrame, this%nMovedAtom, this%nAtom, input%ctrl%tMDstill)
 
-      ! Create temperature profile, if thermostat is not the dummy one
-      if (input%ctrl%iThermostat /= 0) then
-        allocate(this%temperatureProfile)
-        call TempProfile_init(this%temperatureProfile, input%ctrl%tempMethods,&
-            & input%ctrl%tempSteps, input%ctrl%tempValues)
-        pTempProfile => this%temperatureProfile
-      else
-        nullify(pTempProfile)
-      end if
+      allocate(this%temperatureProfile)
+      call TempProfile_init(this%temperatureProfile, input%ctrl%tempProfileInp)
+      pTempProfile => this%temperatureProfile
 
       ! Create thermostat
-      allocate(pThermostat)
-      select case (input%ctrl%iThermostat)
-      case (0) ! No thermostat
-        allocate(pDummyTherm)
-        call init(pDummyTherm, this%tempAtom, this%mass(this%indMovedAtom), randomThermostat,&
-            & this%pMDFrame)
-        call init(pThermostat, pDummyTherm)
-      case (1) ! Andersen thermostat
-        allocate(pAndersenTherm)
-        call init(pAndersenTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-            & input%ctrl%tRescale, input%ctrl%wvScale, this%pMDFrame)
-        call init(pThermostat, pAndersenTherm)
-      case (2) ! Berendsen thermostat
-        allocate(pBerendsenTherm)
-        call init(pBerendsenTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-            & input%ctrl%wvScale, this%pMDFrame)
-        call init(pThermostat, pBerendsenTherm)
-      case (3) ! Nose-Hoover-Chain thermostat
-        allocate(pNHCTherm)
-        if (input%ctrl%tInitNHC) then
-          call init(pNHCTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-              & input%ctrl%wvScale, this%pMDFrame, input%ctrl%deltaT, input%ctrl%nh_npart,&
-              & input%ctrl%nh_nys, input%ctrl%nh_nc, input%ctrl%xnose, input%ctrl%vnose,&
-              & input%ctrl%gnose)
-        else
-          call init(pNHCTherm, randomThermostat, this%mass(this%indMovedAtom), pTempProfile,&
-              & input%ctrl%wvScale, this%pMDFrame, input%ctrl%deltaT, input%ctrl%nh_npart,&
-              & input%ctrl%nh_nys, input%ctrl%nh_nc)
-        end if
-        call init(pThermostat, pNHCTherm)
-      end select
+      call createThermostat(thermostat, input%ctrl%thermostatInp, this%mass(this%indMovedAtom),&
+          & randomThermostat, this%pMDFrame, pTempProfile, this%deltaT)
 
       ! Create MD integrator
       allocate(pVelocityVerlet)
       if (input%ctrl%tReadMDVelocities) then
         if (this%tBarostat) then
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & input%ctrl%initialVelocities, this%BarostatStrength, this%extPressure,&
               & input%ctrl%tIsotropic)
         else
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & input%ctrl%initialVelocities, .true., .false.)
         end if
       else
         if (this%tBarostat) then
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & this%BarostatStrength, this%extPressure, input%ctrl%tIsotropic)
         else
-          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), pThermostat,&
+          call init(pVelocityVerlet, this%deltaT, this%coord0(:,this%indMovedAtom), thermostat,&
               & input%ctrl%initialVelocities, .false., .false.)
         end if
       end if
@@ -2747,7 +2734,7 @@ contains
 
     ! Check for extended Born-Oppenheimer MD
     if (this%isXlbomd) then
-      if (input%ctrl%iThermostat /= 0) then
+      if (input%ctrl%thermostatInp%thermostatType /= thermostatTypes%dummy) then
         call error("XLBOMD does not work with thermostats yet")
       elseif (this%tBarostat) then
         call error("XLBOMD does not work with barostats yet")
@@ -3273,8 +3260,8 @@ contains
     call checkStackSize(env)
 
     if (input%ctrl%tMD) then
-      select case(input%ctrl%iThermostat)
-      case (0)
+      select case(input%ctrl%thermostatInp%thermostatType)
+      case (thermostatTypes%dummy)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)") 'MD without scaling of velocities',&
               & '(a.k.a. "NPE" ensemble)'
@@ -3282,7 +3269,7 @@ contains
           write(stdOut, "('Mode:',T30,A,/,T30,A)") 'MD without scaling of velocities',&
               & '(a.k.a. NVE ensemble)'
         end if
-      case (1)
+      case (thermostatTypes%andersen)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)")&
               & "MD with re-selection of velocities according to temperature",&
@@ -3292,7 +3279,7 @@ contains
               & "MD with re-selection of velocities according to temperature",&
               & "(a.k.a. NVT ensemble using Andersen thermostating)"
         end if
-      case(2)
+      case(thermostatTypes%berendsen)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)")&
               & "MD with scaling of velocities according to temperature",&
@@ -3302,7 +3289,7 @@ contains
               & "MD with scaling of velocities according to temperature",&
               & "(a.k.a. 'not' NVT ensemble using Berendsen thermostating)"
         end if
-      case(3)
+      case(thermostatTypes%nhc)
         if (this%tBarostat) then
           write(stdOut, "('Mode:',T30,A,/,T30,A)")"MD with scaling of velocities according to",&
               & "Nose-Hoover-Chain thermostat + Berensen barostat"
@@ -3314,7 +3301,9 @@ contains
       case default
         call error("Unknown thermostat mode")
       end select
-    elseif (this%isGeoOpt) then
+
+    elseif (this%isGeoOpt .or. allocated(this%geoOpt)) then
+
       if (allocated(this%conAtom)) then
         strTmp = "with constraints"
       else
@@ -3334,6 +3323,8 @@ contains
       case (geoOptTypes%fire)
         write(stdout, "('Mode:',T30,A)") 'FIRE relaxation' // trim(strTmp)
         tGeoOptRequiresEgy = .false.
+      case (geoOptTypes%geometryoptimisation)
+        write(stdout, "('Mode:',T30,A)") 'Geometry optimisation relaxation'
       case default
         call error("Unknown optimisation mode")
       end select
@@ -3488,8 +3479,14 @@ contains
     if (this%tCoordOpt) then
       write(stdOut, "(A,':',T30,I14)") "Nr. of moved atoms", this%nMovedAtom
     end if
+    if (this%isGeoOpt .or. allocated(this%geoOpt)) then
+      if (this%nGeoSteps == hugeIterations) then
+        write(stdOut, "(A,':',T30,I14)") "Max. nr. of geometry steps", -1
+      else
+        write(stdOut, "(A,':',T30,I14)") "Max. nr. of geometry steps", this%nGeoSteps
+      end if
+    end if
     if (this%isGeoOpt) then
-      write(stdOut, "(A,':',T30,I14)") "Max. nr. of geometry steps", this%nGeoSteps
       write(stdOut, "(A,':',T30,E14.6)") "Force tolerance", input%ctrl%maxForce
       if (input%ctrl%iGeoOpt == geoOptTypes%steepestDesc) then
         write(stdOut, "(A,':',T30,E14.6)") "Step size", this%deltaT
@@ -3526,11 +3523,13 @@ contains
     end if
     if (this%tMD) then
       write(stdOut, "(A,':',T30,E14.6)") "Time step", this%deltaT
-      if (input%ctrl%iThermostat == 0 .and. .not.input%ctrl%tReadMDVelocities) then
-        write(stdOut, "(A,':',T30,E14.6)") "Temperature", this%tempAtom
+      if (input%ctrl%thermostatInp%thermostatType == thermostatTypes%dummy&
+          & .and. .not.input%ctrl%tReadMDVelocities) then
+        write(stdOut, "(A,':',T30,E14.6)") "Temperature", input%ctrl%tempProfileInp%tempValues(1)
       end if
-      if (input%ctrl%tRescale) then
-        write(stdOut, "(A,':',T30,E14.6)") "Rescaling probability", input%ctrl%wvScale
+      if (input%ctrl%thermostatInp%thermostatType == thermostatTypes%andersen) then
+        write(stdOut, "(A,':',T30,E14.6)") "Rescaling probability",&
+            & input%ctrl%thermostatInp%andersen%rescaleProb
       end if
     end if
 
@@ -3896,6 +3895,63 @@ contains
           end do
         end do
       end do
+    end if
+
+    if (allocated(this%apiCallBack)) then
+      if (this%apiCallBack%canAsiChangeTheModel()) then
+        if (allocated(this%scc)) then
+          ! As this needs assurances that the DM is actually being read by the external code,
+          ! leading to the external code making changes in the hamiltonian, otherwise SCC never
+          ! converges.
+          call warning("ASI callback with model modification enabled does not support&
+              & self-consistent calculations at present")
+          this%dangerousChanges%hamiltonian = .true.
+        end if
+        if (this%tForces) then
+          ! Since if H and/or S is modified, the derivatives are not available via ASI at the
+          ! moment.
+          call warning("ASI callback with model modification enabled does not support forces at&
+              & present")
+          this%dangerousChanges%hamiltonian = .true.
+          this%dangerousChanges%overlap = .true.
+        end if
+        if (this%tMulliken) then
+          call warning("ASI callback with model modification enabled does not support Mulliken&
+              & population analysis at present")
+          this%dangerousChanges%overlap = .true.
+        end if
+      end if
+      if (all(this%densityMatrix%iDensityMatrixAlgorithm /= [densityMatrixTypes%fromEigenVecs,&
+          & densityMatrixTypes%magma_fromEigenVecs])) then
+        call error("ASI callback currently requires eigenvector enabled solution in DFTB+")
+      end if
+      if (allocated(this%reks)) then
+        call error("ASI callback does not support REKS")
+      end if
+      if (allocated(this%dftbU))  then
+        call error("ASI callback does not support +U at present")
+      end if
+      if (allocated(this%onSiteElements)) then
+        call error("ASI callback does currently support onsite corrections")
+      end if
+      if (this%isHybridXc) then
+        call error("ASI callback does currently support hybrid functionals")
+      end if
+      if (this%isElecDyn) then
+        call error("ASI callback does not currently support electron dynamics")
+      end if
+      if (this%tNegf) then
+        call error("ASI callback does not support transport")
+      end if
+      if (this%isLinResp) then
+        call error("ASI callback does not support linear response")
+      end if
+      if (allocated(this%ppRPA)) then
+        call error("ASI callback does not support ppRPA")
+      end if
+      if (this%doPerturbation) then
+        call error("ASI callback does not support perturbation calculations at present")
+      end if
     end if
 
     if (this%deltaDftb%isNonAufbau) then
@@ -5274,6 +5330,12 @@ contains
             allocate(this%excitedDerivs(3, this%nAtom, 1))
         end if
         this%isCIopt = this%linearResponse%isCIopt
+        if (this%isCIopt) then
+          ! Currently always using Bearpark algorithm:
+          write(stdOut, "('Conical Intersection finder:',T30,A)") 'Bearpark'
+          write(stdOut, format2Ue) "CI finder level shift", this%linearResponse%energyShiftCI, 'H',&
+              & Hartree__eV * this%linearResponse%energyShiftCI, 'eV'
+        end if
       end if
     end if
 
@@ -5671,7 +5733,8 @@ contains
 
 
   !> Check for compatibility between requested electronic solver and features of the calculation
-  subroutine ensureSolverCompatibility(iSolver, kPoints, parallelOpts, nIndepSpin, tempElec)
+  subroutine ensureSolverCompatibility(iSolver, kPoints, parallelOpts, nIndepSpin, tempElec,&
+      & isCallBackApiEnabled)
 
     !> Solver number (see dftbp_elecsolvers_elecsolvertypes)
     integer, intent(in) :: iSolver
@@ -5687,6 +5750,9 @@ contains
 
     !> Temperature of the electrons
     real(dp), intent(in) :: tempElec
+
+    !> Is the API callback for H/S/density matrix enabled?
+    logical, intent(in) :: isCallBackApiEnabled
 
     logical :: tElsiSolver
     integer :: nKPoint
@@ -5714,6 +5780,13 @@ contains
 
     if (iSolver == electronicSolverTypes%pexsi .and. tempElec < epsilon(0.0)) then
       call error("This solver requires a finite electron broadening")
+    end if
+
+    if (isCallBackApiEnabled .and. .not. any(iSolver == [electronicSolverTypes%qr,&
+        & electronicSolverTypes%divideandconquer, electronicSolverTypes%relativelyrobust,&
+        & electronicSolverTypes%elpa, electronicSolverTypes%magmaGvd])) then
+      ! there are not dense matrices for ASI to work with
+      call error("ASI interface incompatible with the current choice of electronic solver")
     end if
 
   end subroutine ensureSolverCompatibility
@@ -6559,7 +6632,6 @@ contains
   !> Sets up how the density matrix is obtained
   subroutine densityMatrixSource(densityMatrix, electronicSolver, isGpuUsed)
     use dftbp_dftb_densitymatrix, only : TDensityMatrix_init
-    use dftbp_elecsolvers_dmsolvertypes, only : densityMatrixTypes
 
     !> Holds real and complex delta density matrices and pointers
     type(TDensityMatrix), intent(out) :: densityMatrix

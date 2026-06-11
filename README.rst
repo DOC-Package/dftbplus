@@ -21,6 +21,99 @@ About this fork
 This repository is a fork of DFTB+ modified for Constrained DFT (CDFT)
 development and CDFTB-CI calculations. The following modifications have been made:
 
+**Spin constraint implementation (NEW):**
+
+The original DFTB+ electronic constraints only supported charge (population)
+constraints. This fork adds support for **spin (magnetization) constraints**,
+enabling control of local magnetic moments in spin-polarized calculations.
+
+*Theory:*
+
+In spin-polarized calculations, Mulliken populations are stored in the [q, m]
+representation:
+
+- q = (n_α + n_β) / 2  (charge)
+- m = (n_α - n_β) / 2  (magnetization)
+
+The constraint is applied via ``spinChannelFactors`` which weight the [q, m]
+components:
+
++-------------------+------------------------+----------------------+
+| Constraint Type   | spinChannelFactors     | Constrained Quantity |
++===================+========================+======================+
+| Charge (default)  | [1.0, 0.0]             | q                    |
++-------------------+------------------------+----------------------+
+| Magnetization     | [0.0, 1.0]             | m                    |
++-------------------+------------------------+----------------------+
+| Alpha only        | [1.0, 1.0]             | q + m = n_α          |
++-------------------+------------------------+----------------------+
+| Beta only         | [1.0, -1.0]            | q - m = n_β          |
++-------------------+------------------------+----------------------+
+
+*New input keywords:*
+
+- ``TotalSpin``: Constrain total spin magnetization over specified atoms
+- ``Spins``: Constrain individual atom spin magnetizations
+
+*Usage example (charge constraint only):*
+
+::
+
+    ElectronicConstraints {
+      Constraints {
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalCharge = 1.0
+        }
+      }
+    }
+
+*Usage example (spin constraint only):*
+
+::
+
+    ElectronicConstraints {
+      Constraints {
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalSpin = 1.0
+        }
+      }
+    }
+
+*Usage example (simultaneous charge and spin constraints):*
+
+::
+
+    ElectronicConstraints {
+      Constraints {
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalCharge = 1.0
+        }
+        MullikenPopulation {
+          Atoms = 1:36
+          TotalSpin = 2.0
+        }
+      }
+      Optimiser {
+        FIRE {}
+      }
+      ConstrTolerance = 1e-4
+      MaxConstrIterations = 200
+      ConvergentConstrOnly = Yes
+    }
+
+*Implementation details:*
+
+- Added spin channel type constants (``spinChannelCharge``, ``spinChannelMagnetization``,
+  ``spinChannelAlpha``, ``spinChannelBeta``) in ``elecconstraints.F90``
+- Modified ``readMullikenConstraintInputs`` to parse ``TotalSpin`` and ``Spins`` keywords
+- ``spinChannelFactors`` are automatically set based on the constraint type
+- Validation ensures spin constraints are only used in spin-polarized calculations
+- Multiple constraints (charge + spin) can be applied simultaneously with
+  independent constraint potentials (Vc)
+
 **Enhanced output for electronic constraints:**
 
 - Added ``Vc`` (constraint potential) output to SCC iteration information
@@ -31,9 +124,13 @@ development and CDFTB-CI calculations. The following modifications have been mad
   after convergence (``writeFinalVc`` in ``main.F90``)
 - Added getter functions (``getVc``, ``getDeviation``, ``getNConstr``) to
   ``TElecConstraint`` type for accessing constraint data (``elecconstraints.F90``)
+- **Multiple Vc output**: When multiple constraints are present (e.g., charge + spin),
+  all Vc values are displayed as ``Vc(1)``, ``Vc(2)``, etc.
 
 These modifications are useful for:
 
+- Controlling local spin states in magnetic systems
+- Studying spin-dependent charge transfer processes
 - Monitoring constraint convergence during SCC iterations
 - Extracting final constraint potentials for CDFTB-CI coupling calculations
 - Debugging and analysis of constrained DFT calculations
@@ -45,39 +142,67 @@ These modifications are useful for:
 - ``src/dftbp/dftbplus/mainio.F90``
 
 
+**External point charge energy output:**
+
+Added separate output for the electrostatic interaction energy between DFTB
+atoms and external point charges in ``detailed.out``.
+
+*Background:*
+
+When using ``PointCharges`` in QM/MM calculations, the interaction energy
+with external charges was included in the SCC energy (``energy%Escc``) but
+not displayed separately. This makes it difficult to analyze the QM/MM
+coupling energy.
+
+*Implementation:*
+
+- Added ``EPointCharge`` and ``atomPointCharge(:)`` to ``TEnergies`` type
+  for storing point charge interaction energy
+- Added ``getPointChargeEnergyPerAtom`` method to ``TScc`` type to extract
+  the point charge energy contribution separately
+- Modified ``calcEnergies`` in ``getenergies.F90`` to calculate and store
+  the point charge energy
+- Added output line ``Energy point charges`` to ``detailed.out`` when
+  point charges are present (independent of ``isExtField`` flag)
+
+*Output example:*
+
+In ``detailed.out``, a new line appears when external point charges are used::
+
+    Energy point charges       -0.0234567890 H       -0.6384728193 eV
+
+*Modified files:*
+
+- ``src/dftbp/dftb/energytypes.F90``
+- ``src/dftbp/dftb/scc.F90``
+- ``src/dftbp/dftb/getenergies.F90``
+- ``src/dftbp/dftbplus/mainio.F90``
+
+
 Installation
 ============
 
 Obtaining via Conda
 -------------------
 
-The preferred way of obtaining DFTB+ is to install it via the conda package
-management framework using `Miniconda
-<https://docs.conda.io/en/latest/miniconda.html>`_ or `Anaconda
-<https://www.anaconda.com/products/individual>`_. Make sure to add/enable the
-``conda-forge`` channel in order to be able to access DFTB+, and ensure that
-the ``conda-forge`` channel is the first repository to be searched for
-packages. (Please consult the conda documentation for how to set-up your conda
-environment.)
-
-We recommend the use of the `mamba installer <https://mamba.readthedocs.io/>`_,
-as we have experienced dependency resolution problems with the original conda
-installer in the past::
-
-  conda install -n base mamba
+The preferred way of to install DFTB+ is by using the conda package management
+system. We highly suggest using the `miniforge
+<https://github.com/conda-forge/miniforge>`_ conda distribution. You might use
+any other conda distribution as well, just make sure to select the `conda-forge
+<https://conda-forge.org/>`_ channel as the (only) source for packages.
 
 We provide several build variants, choose the one suiting your needs. For
 example, by issuing ::
 
-  mamba install 'dftbplus=*=nompi_*'
+  conda install 'dftbplus=*=nompi_*'
 
 or ::
 
-  mamba install 'dftbplus=*=mpi_mpich_*'
+  conda install 'dftbplus=*=mpi_mpich_*'
 
 or ::
 
-  mamba install 'dftbplus=*=mpi_openmpi_*'
+  conda install 'dftbplus=*=mpi_openmpi_*'
 
 to get the last stable release of DFTB+ with, respectively, serial
 (OpenMP-threaded) build or with MPI-parallelized build using either the MPICH or
@@ -200,12 +325,12 @@ DFTB+ is released under the GNU Lesser General Public License. See the included
 
 
 
-.. |DFTB+ logo| image:: https://www.dftbplus.org/fileadmin/DFTBPLUS/images/DFTB-Plus-Icon_06_f_150x150.png
+.. |DFTB+ logo| image:: https://www.dftbplus.org/_assets/DFTB-Plus-Icon_06_f_150x150.png
     :alt: DFTB+ website
     :scale: 100%
     :target: https://dftbplus.org/
 
-.. |lgpl badge| image:: http://www.dftbplus.org/fileadmin/DFTBPLUS/images/license-GNU-LGPLv3-blue.svg
+.. |lgpl badge| image:: http://www.dftbplus.org/_assets/license-GNU-LGPLv3-blue.svg
     :alt: LGPL v3.0
     :scale: 100%
     :target: https://opensource.org/licenses/LGPL-3.0

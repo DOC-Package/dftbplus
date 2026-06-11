@@ -148,6 +148,7 @@ Geometry = {
 
 \subsection{GenFormat\cb}
 \label{sec:dftbp.GenFormat}
+\index{gen geometry input}
 
 You can use the generic format to specify the geometry (see
 appendix~\ref{app:gen}). The geometry specification for GaAs would be
@@ -173,6 +174,7 @@ Geometry = GenFormat {
 
 \subsection{xyzFormat\{\}}
 \label{sec:dftbp.xyzFormat}
+\index{xyz geometry input}
 
 You can also use the xyz format to specify molecular geometries.
 The geometry specification for a caffeine molecule would be the following:
@@ -215,6 +217,7 @@ Geometry = xyzFormat {
 
 \subsection{VaspFormat\{\}}
 \label{sec:dftbp.VaspFormat}
+\index{vasp geometry input}
 
 You can also use Vasp's \href{https://www.vasp.at/wiki/index.php/POSCAR}{POSCAR} or
 \href{https://www.vasp.at/wiki/index.php/CONTCAR}{CONTCAR} format to specify periodic geometries.
@@ -294,6 +297,7 @@ methods are available:
 
 \subsection{GeometryOptimisation}
 \label{sec:dftbp.GeometryOptimisation}
+\index{GeometryOptimisation}
 
 \begin{ptable}
   \kw{Optimiser} & m &  & Rational & \\
@@ -1350,7 +1354,8 @@ remove (usually unneeded) file writing: \is{WriteDetailedOut} = \is{No} and
 \label{sec:dftbp.Hamiltonian}
 
 Currently, DFTB and xTB (section \ref{sec:dftbp.XTB}) Hamiltonians are
-implemented.
+implemented, with an optional interface (ASI) to externally managed
+models.
 
 \subsection{Density Functional based Tight Binding}
 \label{sec:dftbp.DFTB}
@@ -1852,6 +1857,31 @@ Hamiltonian = xTB {
 }
 \end{verbatim}
 
+\subsection{External Hamiltonian models}
+\label{sec:dftbp.ASI}
+
+For \dftbp{} binaries compiled with the API included, the interface to
+Atomic Simulation Interface (ASI~\cite{Stishenko2023}) can be enabled
+inside the \iscb{Hamiltonian} input block:
+
+\begin{ptable}
+  \kw{ASI} & m &  & & \\
+\end{ptable}
+
+The \kwcb{ASI} block allows an external code to read or replace the
+hamiltonian, overlap or density matrix during the calculation. Note,
+not all functionality of the code will be available if the interface
+is active.
+
+The \iscb{ASI} block currently contains no keywords.  Via ASI
+callbacks it is possible able to change the hamiltonian or overlap
+externally. If the model is modified, forces cannot be calculated,
+likewise self-consistent models cannot be computed (due to limitations
+of ASI).
+
+{\bf Note}: as per the ASI API specification, \dftbp{} declares the
+types of matrices it expects to be dealing with, but cannot check
+whether the client code is providing data matching this specification.
 
 \subsection{ElectronicConstraints}
 \label{sec:dftbp.ElectronicConstraints}
@@ -4068,6 +4098,10 @@ systems.
     This file is additionally searched for in the directory specified with the
     \texttt{DFTBPLUS\_PARAM\_DIR} environment variable.
 
+    Additional parameter sets are available from
+    \href{https://github.com/grimme-lab/gbsa-parameters}{this
+      repository}.
+
   \item[\is{Solvent}] Descriptors of the solvent, can be load from a database
     by providing the solvent name as string in the \is{FromName\cb} method or
     by specifying the necessary values with the \is{FromConstants\cb} method.
@@ -5602,7 +5636,7 @@ available for range separated calculations.
     \kw{NrOfExcitations}        & i & & - & \\
     \kw{StateOfInterest}        & i & & 0 & \\
     \kw{Symmetry}               & s & SpinPolarisation $=$ \cb~ & - &\\
-    \kw{Diagonaliser}           & m & & \{\} & \pref{sec:dftbp.casdiag}\\
+    \kw{Diagonaliser}           & m & & - & \pref{sec:dftbp.casdiag}\\
     \kw{EnergyWindow}           & r & & FORTRAN HUGE() & \\
     \kw{OscillatorWindow}       & r & & -1 & \\
     \kw{WriteTransitions}       & l & & No & \\
@@ -5733,9 +5767,9 @@ available for range separated calculations.
 
   \subsubsection{Diagonaliser / Diagonalizer}
   \label{sec:dftbp.casdiag}
-  Specifies which iterative diagonaliser should be used to solve the Casida
-  equations. The keyword expects either a \iscb{Arpack} or \iscb{Stratmann}
-  block.
+  Specifies which iterative diagonaliser should be used to solve the
+  Casida equations. The keyword is required and expects either an
+  \iscb{Arpack} or \iscb{Stratmann} block.
   \begin{ptable}
     \kw{Arpack}    & p & \is{RangeSeparated} = \is{No} & & \\
     \kw{Stratmann} & p & & & \\
@@ -5771,15 +5805,15 @@ available for range separated calculations.
     restarted with an increased value of \is{SubSpaceFactor}.
   \end{description}
 
-\subsubsection{OptimizerCI}
+\subsubsection{OptimiserCI / OptimizerCI}
 \label{sec:dftbp.ciopt}
 
 Invokes search for conical intersections (CI) between the two states indicated
 by the \is{StateCouplings} keyword. Note that the two states must be
 direct neighbours (i.e., $n = m + 1$). There is currently one
-optimizer available.
+optimiser available.
 
-The \iscb{Bearpark} optimizer (see \cite{Bearpark1994}) minimizes a gradient that
+The \iscb{Bearpark} optimiser (see \cite{Bearpark1994}) minimises a gradient that
 is based on the non-adiabatic coupling vector and the difference
 gradient of the two potential energy surfaces in question.  The parameters given
 in the \is{GeometryOptimisation} block control the optimization as

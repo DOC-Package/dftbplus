@@ -54,9 +54,9 @@ Additionally there are optional requirements for some DFTB+ features:
 
 * In addition to ScaLAPACK, for MPI parallel builds it is recommended
   to use the `ELSI <https://wordpress.elsi-interchange.org/>`_ library
-  for large scale systems (version 2.6.x of the library, with partial
-  support of 2.5.0). If ELSI was compiled with PEXSI included, you
-  will also need a C++ compiler.
+  for large scale systems (versions 2.6.x – 2.11.x of the library,
+  with partial support for 2.5.0). If ELSI was compiled with PEXSI
+  included, you will also need a C++ compiler.
 
 * The ARPACK-ng library if using the excited state DFTB functionality. For
   MPI-parallel builds, the parallel version of ARPACK-ng (containing also
@@ -119,15 +119,15 @@ following architectures:
 | Linux         |                      |             | ScaLAPACK 2.2,   |     |
 |               |                      |             | ELSI 2.9         |     |
 +---------------+----------------------+-------------+------------------+-----+
-| x86_64 /      | GNU Fortran/C 13.2   | OpenMPI 5.0 | OpenBlas 0.3.29, |     |
+| x86_64 /      | GNU Fortran/C 14.2   | OpenMPI 5.0 | OpenBlas 0.3.29, |     |
 | Linux         |                      |             | ScaLAPACK 2.2,   |     |
 |               |                      |             | ELSI 2.11        |     |
 +---------------+----------------------+-------------+------------------+-----+
 | x86_64 /      | Intel Fortran/C      | IntelMPI    | MKL 2022.0,      |     |
-| Linux         | 2021.5               | 2021.14     | ELSI 2.8         |     |
+| Linux         | 2022.0               | 2021.5      | ELSI 2.8         |     |
 +---------------+----------------------+-------------+------------------+-----+
 | x86_64 /      | Intel Fortran/C      | IntelMPI    | MKL 2024.2,      |     |
-| Linux         | 2024.2               | 2021.14     | ELSI 2.9         |     |
+| Linux         | 2024.2               | 2021.14     | ELSI 2.11        |     |
 +---------------+----------------------+-------------+------------------+-----+
 | x86_64 /      | Intel Fortran/C      | IntelMPI    | MKL 2025.0,      |     |
 | Linux         | 2025.0               | 2021.14     | ELSI 2.11        |     |
@@ -361,8 +361,8 @@ Testing DFTB+
     pushd _build; ctest; popd
 
 
-Testing related CMake options
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Testing-related CMake options
+-----------------------------
 
 Some of the command line options for CMake to modify testing behaviour before
 building are below.
@@ -405,6 +405,8 @@ the ``WITH_API`` option to ``TRUE`` in the CMake config file
 library, the C-include file and the Fortran module files, which are necessary
 for linking DFTB+ with C and Fortran programs.
 
+The binding for the `ASI <https://gitlab.com/pvst/asi/>`_ API for data
+extraction/provision are also supported.
 
 DFTB+ CMake library options
 ---------------------------

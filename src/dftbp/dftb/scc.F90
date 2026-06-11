@@ -206,6 +206,9 @@ module dftbp_dftb_scc
     !> Get Q * inverse R contribution for the point charges
     procedure :: getShiftOfPC
 
+    !> Calculates the contribution of the external point charges to the energy per atom
+    procedure :: getPointChargeEnergyPerAtom
+
     !> Triggers all instructions which must be done once the SCC-loop had been finished
     procedure :: finishSccLoop
 
@@ -1127,6 +1130,26 @@ contains
     call this%extCharges%copyInvRvec(QinvR)
 
   end subroutine getShiftOfPC
+
+
+  !> Calculates the contribution of the external point charges to the energy per atom
+  subroutine getPointChargeEnergyPerAtom(this, ePointCharge)
+
+    !> Instance
+    class(TScc), intent(in) :: this
+
+    !> The point charge contribution to the energy per atom
+    real(dp), intent(out) :: ePointCharge(:)
+
+    @:ASSERT(this%tInitialised)
+    @:ASSERT(size(ePointCharge) == this%nAtom)
+
+    ePointCharge(:) = 0.0_dp
+    if (allocated(this%extCharges)) then
+      call this%extCharges%addEnergyPerAtom(this%deltaQAtom, ePointCharge)
+    end if
+
+  end subroutine getPointChargeEnergyPerAtom
 
 
   !> Triggers all instructions which must be done once the SCC-loop had been finished

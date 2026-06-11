@@ -62,6 +62,9 @@ module dftbp_dftb_energytypes
     !> Energy in external field
     real(dp) :: Eext = 0.0_dp
 
+    !> Energy from external point charges
+    real(dp) :: EPointCharge = 0.0_dp
+
     !> Total electronic energy
     real(dp) :: Eelec = 0.0_dp
 
@@ -151,6 +154,9 @@ module dftbp_dftb_energytypes
     !> Atom resolved external field
     real(dp), allocatable :: atomExt(:)
 
+    !> Atom resolved external point charges
+    real(dp), allocatable :: atomPointCharge(:)
+
     !> Atom resolved electronic total
     real(dp), allocatable :: atomElec(:)
 
@@ -208,6 +214,7 @@ contains
     allocate(this%atomLS(nAtom), source=0.0_dp)
     allocate(this%atomDftbu(nAtom), source=0.0_dp)
     allocate(this%atomExt(nAtom), source=0.0_dp)
+    allocate(this%atomPointCharge(nAtom), source=0.0_dp)
     allocate(this%atomElec(nAtom), source=0.0_dp)
     allocate(this%atomDisp(nAtom), source=0.0_dp)
     allocate(this%atomOnSite(nAtom), source=0.0_dp)
@@ -231,6 +238,7 @@ contains
     this%ELS = 0.0_dp
     this%Edftbu = 0.0_dp
     this%Eext = 0.0_dp
+    this%EPointCharge = 0.0_dp
     this%Eelec = 0.0_dp
     this%EDisp = 0.0_dp
     this%EOnSite = 0.0_dp
