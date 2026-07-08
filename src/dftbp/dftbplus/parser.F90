@@ -8025,6 +8025,8 @@ contains
       select case(tolower(char(buffer)))
       case ("lc")
         hybridXcInputTag = hybridXcFunc%lc
+        case ("global")
+          hybridXcInputTag = hybridXcFunc%hyb
       case ("cam")
         hybridXcInputTag = hybridXcFunc%cam
       case default
@@ -8034,6 +8036,10 @@ contains
 
       ! Check if hybrid functional type is in line with SK-files
       if (hybridXcInputTag == hybridXcFunc%lc .and. hybridXcSkType /= hybridXcFunc%lc) then
+          call detailedError(hybridChild, "Requested hybrid functional type conflict with provided&
+              & SK-file(s).")
+        end if
+        if (hybridXcInputTag == hybridXcFunc%hyb .and. hybridXcSkType /= hybridXcFunc%hyb) then
         call detailedError(hybridChild, "Requested hybrid functional type conflict with provided&
             & SK-file(s).")
       end if

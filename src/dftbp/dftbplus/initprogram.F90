@@ -6059,7 +6059,7 @@ contains
     end if
 
     if (this%isHybLinResp .and. hybridXcInp%hybridXcType == hybridXcFunc%hyb) then
-      call error("Global hybrid functionals not currently implemented for linear response.")
+      continue
     end if
 
   end subroutine ensureHybridXcReqs
