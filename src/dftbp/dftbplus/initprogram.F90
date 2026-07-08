@@ -6055,7 +6055,7 @@ contains
     end if
 
     if (this%isHybLinResp .and. hybridXcInp%hybridXcType == hybridXcFunc%cam) then
-      call error("General CAM functionals not currently implemented for linear response.")
+      continue
     end if
 
     if (this%isHybLinResp .and. hybridXcInp%hybridXcType == hybridXcFunc%hyb) then
